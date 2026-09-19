@@ -43,6 +43,7 @@ function loadBootstrapData() {
       /* Payment controls are market-driven; do not render a global/bootstrap list. */
       populateAccessLevels(data.accessLevels || []);
       populateDealModes(data.dealModes || []);
+      ensureResultCountControl_();
       bindMarketCurrencySync_(data.markets || []);
       bindDynamicShopMarkets_();
       bindDynamicPaymentMarkets_();
@@ -577,7 +578,10 @@ function populateShopOptions(shops, options) {
     input.checked = selectAll ||
       wanted.indexOf(String(shop.id || '').toUpperCase()) !== -1;
 
-    input.addEventListener('change', syncAllShopsToggle_);
+    input.addEventListener('change', function() {
+      syncAllShopsToggle_();
+      schedulePaymentRefresh_({ preserveSelection: true });
+    });
 
     const text = document.createElement('span');
     text.textContent = shop.name;
@@ -624,6 +628,8 @@ function bindAllShopsToggle_() {
     document.querySelectorAll('input[name="shopOption"]').forEach(function(input) {
       input.checked = allToggle.checked;
     });
+
+    schedulePaymentRefresh_({ preserveSelection: true });
   });
 
   allToggle.dataset.shopToggleBound = 'true';
@@ -723,6 +729,11 @@ function refreshShopsForMarket_(options) {
         selectAll: shouldSelectAll,
         selectedValues: validSelection
       });
+
+      schedulePaymentRefresh_({
+        preserveSelection: options.preserveSelection !== false,
+        selectAll: options.selectAll === true
+      });
     })
     .withFailureHandler(function(error) {
 
@@ -744,9 +755,32 @@ function refreshShopsForMarket_(options) {
 }
 
 
+let paymentOptionsCache_ = {
+  key: '',
+  methods: []
+};
+
+let paymentRefreshTimer_ = null;
+
+
 /* =========================================================
    PAYMENT METHODS
    ========================================================= */
+
+function schedulePaymentRefresh_(options) {
+
+  options = options || {};
+
+  if (paymentRefreshTimer_) {
+    clearTimeout(paymentRefreshTimer_);
+  }
+
+  paymentRefreshTimer_ = setTimeout(function() {
+    paymentRefreshTimer_ = null;
+    refreshPaymentMethodsForMarket_(options);
+  }, 180);
+}
+
 
 function populatePaymentMethods(methods, options) {
 
@@ -817,23 +851,10 @@ let paymentMarketRequestToken_ = 0;
 
 
 function bindDynamicPaymentMarkets_() {
-
-  const marketSelect = document.getElementById('market');
-  const accessSelect = document.getElementById('access');
-
-  if (marketSelect && !marketSelect.dataset.paymentMarketBound) {
-    marketSelect.addEventListener('change', function() {
-      refreshPaymentMethodsForMarket_({ preserveSelection: true });
-    });
-    marketSelect.dataset.paymentMarketBound = 'true';
-  }
-
-  if (accessSelect && !accessSelect.dataset.paymentMarketBound) {
-    accessSelect.addEventListener('change', function() {
-      refreshPaymentMethodsForMarket_({ preserveSelection: true });
-    });
-    accessSelect.dataset.paymentMarketBound = 'true';
-  }
+  /*
+   * Market/access changes refresh the shop list first.
+   * The resolved shop refresh then schedules exactly one payment refresh.
+   */
 }
 
 
@@ -860,16 +881,49 @@ function refreshPaymentMethodsForMarket_(options) {
         return input.value;
       }));
 
+  /*
+   * Payment-market availability itself depends on market/access.
+   * Shop selection is enforced again by the Deal Engine at hunt time.
+   * Keeping this lookup independent from every shop checkbox avoids
+   * repeated full-sheet reads and keeps the settings UI responsive.
+   */
+  const cacheKey = market + '|' + maxAccess;
+
+  function renderMethods_(methods) {
+    const returned = methods || [];
+    let selection = selectedBefore.filter(function(value) {
+      const code = String(value || '').toUpperCase();
+      return returned.some(function(method) {
+        return String(method.code || '').toUpperCase() === code;
+      });
+    });
+
+    if (options.selectAll === true ||
+        (!selection.length && options.preserveSelection === false)) {
+      selection = returned.map(function(method) {
+        return method.code;
+      });
+    }
+
+    populatePaymentMethods(returned, {
+      selectedValues: selection
+    });
+  }
+
+  if (paymentOptionsCache_.key === cacheKey &&
+      Array.isArray(paymentOptionsCache_.methods) &&
+      paymentOptionsCache_.methods.length) {
+    renderMethods_(paymentOptionsCache_.methods);
+    return;
+  }
+
   const token = ++paymentMarketRequestToken_;
 
-  /* Never leave payment controls from the previous country visible while
-     the new market is loading. */
+  /*
+   * Do not wipe the controls while loading. Existing checkboxes remain
+   * usable; only a subtle loading state is applied.
+   */
   container.classList.add('loading');
-  container.innerHTML = '';
-  const loading = document.createElement('div');
-  loading.className = 'payment-empty';
-  loading.textContent = translatedOr_('LOADING_PAYMENT_METHODS', 'Loading payment methods for this market...');
-  container.appendChild(loading);
 
   google.script.run
     .withSuccessHandler(function(methods) {
@@ -877,25 +931,13 @@ function refreshPaymentMethodsForMarket_(options) {
       if (token !== paymentMarketRequestToken_) return;
 
       container.classList.remove('loading');
-      const returned = methods || [];
-      let selection = selectedBefore.filter(function(value) {
-        const code = String(value || '').toUpperCase();
-        return returned.some(function(method) {
-          return String(method.code || '').toUpperCase() === code;
-        });
-      });
 
-      /* If none of the user's previous methods exists in the new country,
-         preselect the market's HIGH-priority methods instead of showing an
-         empty/irrelevant selection. The user can still change them. */
-      if (!selection.length) {
-        selection = returned.filter(function(method) {
-          return String(method.preferenceTier || '').toUpperCase() === 'HIGH';
-        }).map(function(method) { return method.code; });
-      }
+      paymentOptionsCache_ = {
+        key: cacheKey,
+        methods: methods || []
+      };
 
-      populatePaymentMethods(returned, { selectedValues: selection });
-
+      renderMethods_(methods || []);
     })
     .withFailureHandler(function(error) {
 
@@ -904,14 +946,12 @@ function refreshPaymentMethodsForMarket_(options) {
       container.classList.remove('loading');
       console.error('Payment-market lookup failed:', error);
 
-      /* Keep the current controls instead of replacing them with a global list. */
       setHunterStatus(
         translatedOr_(
           'PAYMENT_MARKET_LOOKUP_FAILED',
           'Could not refresh payment methods for this market.'
         )
       );
-
     })
     .getPaymentOptionsForMarket(market, maxAccess);
 }
@@ -1040,6 +1080,44 @@ function closeSettings() {
 
 
 /* =========================================================
+   RESULT COUNT CONTROL
+   ========================================================= */
+
+function ensureResultCountControl_() {
+  if (document.getElementById('resultCount')) return;
+
+  const dealMode = document.getElementById('dealMode');
+  if (!dealMode) return;
+
+  const anchor = dealMode.nextElementSibling || dealMode;
+
+  const label = document.createElement('label');
+  label.setAttribute('for', 'resultCount');
+  label.innerHTML = '🏆 <span>Deals anzeigen</span>';
+
+  const select = document.createElement('select');
+  select.id = 'resultCount';
+  [1, 2, 3, 4].forEach(function(count) {
+    const option = document.createElement('option');
+    option.value = String(count);
+    option.textContent = count === 1
+      ? '1 günstigster Shop'
+      : count + ' günstigste Shops';
+    select.appendChild(option);
+  });
+  select.value = '3';
+
+  const hint = document.createElement('div');
+  hint.className = 'field-hint';
+  hint.textContent = 'Zeigt bis zu vier vollständige Shop-Alternativen. Jeder Shop wird mit seiner günstigsten erlaubten und verifizierten Zahlungsart bewertet.';
+
+  anchor.insertAdjacentElement('afterend', hint);
+  anchor.insertAdjacentElement('afterend', select);
+  anchor.insertAdjacentElement('afterend', label);
+}
+
+
+/* =========================================================
    SETTINGS
    ========================================================= */
 
@@ -1100,6 +1178,13 @@ function getCurrentSettings() {
       document.getElementById(
         'dealMode'
       ).value,
+
+    resultCount:
+      Number(
+        document.getElementById('resultCount')
+          ? document.getElementById('resultCount').value
+          : 3
+      ),
 
     remember:
       document.getElementById(
@@ -1226,6 +1311,11 @@ function applyDefaultSettings() {
     'CHEAPEST'
   );
 
+  setSelectValue(
+    'resultCount',
+    '3'
+  );
+
 
   refreshShopsForMarket_({
     preserveSelection: false,
@@ -1233,13 +1323,9 @@ function applyDefaultSettings() {
   });
 
 
-  setPaymentSelection(
-    ['PAYPAL', 'CARD']
-  );
-
-  refreshPaymentMethodsForMarket_({
+  schedulePaymentRefresh_({
     preserveSelection: false,
-    selectedValues: ['PAYPAL', 'CARD']
+    selectAll: true
   });
 
 
@@ -1276,6 +1362,11 @@ function applySettings(settings) {
     settings.dealMode
   );
 
+  setSelectValue(
+    'resultCount',
+    settings.resultCount || 3
+  );
+
 
   refreshShopsForMarket_({
     preserveSelection: false,
@@ -1284,16 +1375,14 @@ function applySettings(settings) {
   });
 
 
-  const savedPaymentMethods = settings.paymentMethods || [
-    'PAYPAL',
-    'CARD'
-  ];
+  const savedPaymentMethods = Array.isArray(settings.paymentMethods)
+    ? settings.paymentMethods
+    : [];
 
-  setPaymentSelection(savedPaymentMethods);
-
-  refreshPaymentMethodsForMarket_({
+  schedulePaymentRefresh_({
     preserveSelection: false,
-    selectedValues: savedPaymentMethods
+    selectedValues: savedPaymentMethods,
+    selectAll: !savedPaymentMethods.length
   });
 
 
@@ -1456,7 +1545,10 @@ function huntDeal() {
       settings.paymentMethods,
 
     dealMode:
-      settings.dealMode
+      settings.dealMode,
+
+    resultCount:
+      settings.resultCount
 
   };
 

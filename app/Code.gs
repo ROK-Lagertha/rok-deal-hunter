@@ -480,6 +480,7 @@ function findBestDeal(request) {
     ? request.shopIds.map(normalize_).filter(Boolean)
     : [];
   const dealMode = upper_(request.dealMode || 'CHEAPEST');
+  const resultCount = Math.min(4, Math.max(1, parseInt(request.resultCount || 1, 10)));
 
   if (!packageId) throw new Error('No package selected.');
 
@@ -520,28 +521,47 @@ function findBestDeal(request) {
    * percentage + fixed fee exactly once per shop cart.
    */
   let routeResult;
-  if (dealMode === 'ONE_SHOP') {
-    routeResult = findOneShopRoute_({
-      components: requiredComponents, market: market, maxAccess: maxAccess,
-      paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops
-    });
-  } else {
-    routeResult = findCheapestCartRoute_({
-      components: requiredComponents, market: market, maxAccess: maxAccess,
-      paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops
-    });
-  }
+  let rankedShopResults = [];
 
-  /* A composite may also be sold directly as one SKU. Compare that direct
-     offer against the decomposed route. This prevents an All-in-One bundle
-     from losing merely because its component route exists. */
-  if (mappingMode === 'COMPOSITE') {
-    const direct = findCheapestCartRoute_({
-      components: [{ tierId: packageId, quantity: quantity }],
-      market: market, maxAccess: maxAccess, paymentMethods: acceptedPayments, shopIds: acceptedShops
+  /* When the user asks for multiple results, rank complete shop routes.
+     Each shop gets its own cheapest valid cart + cheapest accepted verified
+     payment. This gives genuine shop alternatives instead of several payment
+     variants of the same shop. */
+  if (resultCount > 1) {
+    rankedShopResults = findTopShopRoutes_({
+      components: requiredComponents, market: market, maxAccess: maxAccess,
+      paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops,
+      limit: resultCount,
+      directPackageId: mappingMode === 'COMPOSITE' ? packageId : '',
+      directQuantity: quantity
     });
-    if (direct.found && (!routeResult.found || direct.totalEUR < routeResult.totalEUR)) {
-      routeResult = direct;
+    routeResult = rankedShopResults.length
+      ? rankedShopResults[0]
+      : { found: false, missingComponents: requiredComponents };
+  } else {
+    if (dealMode === 'ONE_SHOP') {
+      routeResult = findOneShopRoute_({
+        components: requiredComponents, market: market, maxAccess: maxAccess,
+        paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops
+      });
+    } else {
+      routeResult = findCheapestCartRoute_({
+        components: requiredComponents, market: market, maxAccess: maxAccess,
+        paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops
+      });
+    }
+
+    /* A composite may also be sold directly as one SKU. Compare that direct
+       offer against the decomposed route. */
+    if (mappingMode === 'COMPOSITE') {
+      const direct = findCheapestCartRoute_({
+        components: [{ tierId: packageId, quantity: quantity }],
+        market: market, maxAccess: maxAccess, paymentMethods: acceptedPayments,
+        shopMode: shopMode, shopIds: acceptedShops
+      });
+      if (direct.found && (!routeResult.found || direct.totalEUR < routeResult.totalEUR)) {
+        routeResult = direct;
+      }
     }
   }
 
@@ -555,11 +575,14 @@ function findBestDeal(request) {
   return {
     success: true, status: status, packageId: packageId, packageName: packageName,
     quantity: quantity, market: market, dealMode: dealMode, shopMode: shopMode,
-    selectedShopIds: acceptedShops, officialEUR: officialEUR,
+    resultCount: resultCount, selectedShopIds: acceptedShops, officialEUR: officialEUR,
     bestEUR: bestEUR, knownSubtotalEUR: bestEUR, savingEUR: savingEUR,
     savingPercent: savingPercent, components: finalComponents,
     missingComponents: routeResult.missingComponents || [],
-    routes: groupRoutesByShop_(finalComponents), generatedAt: new Date().toISOString()
+    routes: rankedShopResults.length
+      ? rankedShopResults.map(function(item) { return groupRoutesByShop_(item.components)[0]; }).filter(Boolean)
+      : groupRoutesByShop_(finalComponents),
+    generatedAt: new Date().toISOString()
   };
 }
 
@@ -754,9 +777,9 @@ function getTierCandidates_(options) {
     });
     if (!shop) return;
 
-    const payment = selectPayment_(shopId, options.paymentMethods, payments);
+    const paymentOptions = getVerifiedPaymentOptions_(shopId, options.paymentMethods, payments);
     /* Unknown checkout cost must never be silently treated as zero. */
-    if (!payment.compatible || payment.status !== 'COST_VERIFIED') return;
+    if (!paymentOptions.length) return;
 
     const preferredRows = getPreferredPriceRows_(prices, shopId, options.tierId,
       options.market, shopMarkets, markets);
@@ -770,6 +793,10 @@ function getTierCandidates_(options) {
       if (unitBaseEUR == null) unitBaseEUR = number_(firstValue_(priceRow, ['Price EUR']));
       if (unitBaseEUR == null) return;
 
+      const merchandiseSubtotalEUR = unitBaseEUR * options.quantity;
+      const payment = selectCheapestPaymentForSubtotal_(paymentOptions, merchandiseSubtotalEUR);
+      if (!payment) return;
+
       const candidate = {
         found: true, tierId: options.tierId, quantity: options.quantity,
         shopId: shopId, shopName: normalize_(firstValue_(shop, ['Shop'])),
@@ -777,10 +804,11 @@ function getTierCandidates_(options) {
         accessLevel: getMarketAccessLevel_(shop, shopMarkets, shopId, options.market),
         payment: payment.method, paymentStatus: payment.status,
         paymentRate: payment.rate || 0, paymentFixedEUR: payment.fixedEUR || 0,
+        paymentOptions: paymentOptions,
         coupon: normalize_(firstValue_(priceRow, ['Coupon'])),
         unitBaseEUR: unitBaseEUR, unitPriceEUR: unitBaseEUR,
-        merchandiseSubtotalEUR: unitBaseEUR * options.quantity,
-        subtotalEUR: unitBaseEUR * options.quantity,
+        merchandiseSubtotalEUR: merchandiseSubtotalEUR,
+        subtotalEUR: merchandiseSubtotalEUR,
         priceStatus: marketCodeMatches_(firstValue_(priceRow, ['Market Code']), options.market)
           ? 'VERIFIED_MARKET' : 'VERIFIED_GLOBAL_FALLBACK'
       };
@@ -819,9 +847,15 @@ function priceAssignedComponents_(components) {
   Object.keys(carts).forEach(function(shopId) {
     const cart = carts[shopId];
     const sample = cart.items[0];
-    const fee = cart.merchandise * (sample.paymentRate || 0) + (sample.paymentFixedEUR || 0);
+    const payment = selectCheapestPaymentForSubtotal_(sample.paymentOptions || [], cart.merchandise);
+    if (!payment) return;
+    const fee = cart.merchandise * (payment.rate || 0) + (payment.fixedEUR || 0);
     cart.items.forEach(function(item) {
       const share = cart.merchandise > 0 ? item.merchandiseSubtotalEUR / cart.merchandise : 0;
+      item.payment = payment.method;
+      item.paymentStatus = payment.status;
+      item.paymentRate = payment.rate || 0;
+      item.paymentFixedEUR = payment.fixedEUR || 0;
       item.paymentFeeEUR = fee * share;
       item.subtotalEUR = item.merchandiseSubtotalEUR + item.paymentFeeEUR;
       item.unitPriceEUR = item.subtotalEUR / item.quantity;
@@ -860,6 +894,78 @@ function findCheapestCartRoute_(options) {
   walk(0, []);
   return best || { found: false, missingComponents: missing };
 }
+
+/* =========================================================
+   TOP SHOP ROUTES
+   ========================================================= */
+
+function findTopShopRoutes_(options) {
+  const shops = getSheetObjects_(CONFIG.SHEETS.SHOPS);
+  const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
+  const eligibleShopIds = Array.from(
+    filterEligibleShopIdsBySelection_(
+      getEligibleShopIds_(shops, shopMarkets, options.market, options.maxAccess),
+      options.shopMode,
+      options.shopIds
+    )
+  );
+
+  const routes = [];
+
+  eligibleShopIds.forEach(function(shopId) {
+    let bestForShop = null;
+
+    const chosen = [];
+    let valid = true;
+    options.components.forEach(function(component) {
+      const candidate = getTierCandidates_({
+        tierId: component.tierId, quantity: component.quantity,
+        market: options.market, maxAccess: options.maxAccess,
+        paymentMethods: options.paymentMethods,
+        shopMode: 'SELECTED', shopIds: [shopId]
+      }).find(function(c) { return c.shopId === shopId; });
+      if (!candidate) { valid = false; return; }
+      chosen.push(Object.assign({}, candidate));
+    });
+
+    if (valid && chosen.length) {
+      const total = priceAssignedComponents_(chosen);
+      bestForShop = { found: true, shopId: shopId, totalEUR: total, components: chosen };
+    }
+
+    /* Composite products may also exist as a direct SKU at the same shop.
+       Compare both representations inside that shop before ranking shops. */
+    if (options.directPackageId) {
+      const directCandidate = getTierCandidates_({
+        tierId: options.directPackageId,
+        quantity: options.directQuantity || 1,
+        market: options.market, maxAccess: options.maxAccess,
+        paymentMethods: options.paymentMethods,
+        shopMode: 'SELECTED', shopIds: [shopId]
+      }).find(function(c) { return c.shopId === shopId; });
+
+      if (directCandidate) {
+        const directComponents = [Object.assign({}, directCandidate)];
+        const directTotal = priceAssignedComponents_(directComponents);
+        if (!bestForShop || directTotal < bestForShop.totalEUR) {
+          bestForShop = {
+            found: true, shopId: shopId, totalEUR: directTotal,
+            components: directComponents
+          };
+        }
+      }
+    }
+
+    if (bestForShop) routes.push(bestForShop);
+  });
+
+  routes.sort(function(a, b) {
+    return a.totalEUR - b.totalEUR || String(a.shopId).localeCompare(String(b.shopId));
+  });
+
+  return routes.slice(0, Math.min(4, Math.max(1, Number(options.limit) || 1)));
+}
+
 
 /* =========================================================
    MARKET-SPECIFIC SHOP CONFIG
@@ -1041,30 +1147,26 @@ function getPaymentOptionsForMarket(market, maxAccess) {
     return item.availableInTrackedShops;
   }).sort(function(a, b) {
     const tier = { HIGH: 0, MEDIUM: 1, LOW: 2, DEFAULT: 3 };
-    return (tier[a.preferenceTier] || 9) - (tier[b.preferenceTier] || 9) ||
+    const aTier = Object.prototype.hasOwnProperty.call(tier, a.preferenceTier)
+      ? tier[a.preferenceTier] : 9;
+    const bTier = Object.prototype.hasOwnProperty.call(tier, b.preferenceTier)
+      ? tier[b.preferenceTier] : 9;
+    return aTier - bTier ||
       a.priority - b.priority || a.name.localeCompare(b.name);
   });
 }
 
-function selectPayment_(shopId, acceptedPayments, paymentRows) {
-  const normalizedAccepted = acceptedPayments.map(function(x) { return paymentMethodCode_(x); });
-  const shopPayments = paymentRows.filter(function(row) {
-    return normalize_(firstValue_(row, ['Shop ID'])) === shopId;
+function getVerifiedPaymentOptions_(shopId, acceptedPayments, paymentRows) {
+  const normalizedAccepted = acceptedPayments.map(function(x) {
+    return paymentMethodCode_(x);
   });
-  if (!shopPayments.length) return { compatible: false, method: '', status: 'PAYMENT_DATA_MISSING' };
 
-  const verified = [];
-  const unverified = [];
-  shopPayments.forEach(function(row) {
+  return paymentRows.filter(function(row) {
+    return normalize_(firstValue_(row, ['Shop ID'])) === shopId;
+  }).map(function(row) {
     const method = normalize_(firstValue_(row, ['Method']));
-    if (normalizedAccepted.indexOf(paymentMethodCode_(method)) === -1) return;
-
-    const active = boolean_(firstValue_(row, ['Active']));
-    if (!active) {
-      unverified.push({ compatible: true, method: method, status: 'COST_UNVERIFIED', rate: 0, fixedEUR: 0,
-        priority: number_(firstValue_(row, ['Priority'])) || 999 });
-      return;
-    }
+    if (normalizedAccepted.indexOf(paymentMethodCode_(method)) === -1) return null;
+    if (!boolean_(firstValue_(row, ['Active']))) return null;
 
     const rawRate = firstValue_(row, ['Fee %', 'Fee Rate', 'Percent Fee']);
     const rawFixed = firstValue_(row, ['Fixed Fee EUR', 'Fixed EUR', 'Fixed Fee']);
@@ -1073,21 +1175,40 @@ function selectPayment_(shopId, acceptedPayments, paymentRows) {
     const rate = hasRate ? (number_(rawRate) || 0) : 0;
     const fixedEUR = hasFixed ? (number_(rawFixed) || 0) : 0;
     const priority = number_(firstValue_(row, ['Priority'])) || 999;
+    const costStatus = upper_(firstValue_(row, ['Cost Data Status']));
+    const costVerified =
+      costStatus === 'VERIFIED' ||
+      costStatus === 'COST_VERIFIED' ||
+      (costStatus === '' && (hasRate || hasFixed));
 
-    /* Active means the method is supported. It does NOT prove that a blank fee
-       is zero. At least one explicit fee field is required for cost routing. */
-    const costVerified = hasRate || hasFixed;
-    const result = { compatible: true, method: method,
-      status: costVerified ? 'COST_VERIFIED' : 'COST_UNVERIFIED', rate: rate,
-      fixedEUR: fixedEUR, priority: priority };
-    (costVerified ? verified : unverified).push(result);
-  });
+    if (!costVerified) return null;
 
-  verified.sort(function(a, b) {
-    return a.priority - b.priority || a.rate - b.rate || a.fixedEUR - b.fixedEUR;
-  });
-  if (verified.length) return verified[0];
-  if (unverified.length) return unverified[0];
+    return {
+      compatible: true,
+      method: method,
+      status: 'COST_VERIFIED',
+      rate: rate,
+      fixedEUR: fixedEUR,
+      priority: priority
+    };
+  }).filter(Boolean);
+}
+
+function selectCheapestPaymentForSubtotal_(paymentOptions, merchandiseSubtotalEUR) {
+  const subtotal = Number(merchandiseSubtotalEUR) || 0;
+  if (!paymentOptions || !paymentOptions.length) return null;
+
+  return paymentOptions.slice().sort(function(a, b) {
+    const aFee = subtotal * (a.rate || 0) + (a.fixedEUR || 0);
+    const bFee = subtotal * (b.rate || 0) + (b.fixedEUR || 0);
+    return aFee - bFee || a.priority - b.priority || a.method.localeCompare(b.method);
+  })[0];
+}
+
+function selectPayment_(shopId, acceptedPayments, paymentRows, merchandiseSubtotalEUR) {
+  const options = getVerifiedPaymentOptions_(shopId, acceptedPayments, paymentRows);
+  const selected = selectCheapestPaymentForSubtotal_(options, merchandiseSubtotalEUR || 0);
+  if (selected) return selected;
   return { compatible: false, method: '', status: 'NO_ACCEPTED_PAYMENT' };
 }
 
@@ -1118,7 +1239,8 @@ function findOneShopRoute_(options) {
     options.components.forEach(function(component) {
       const candidate = getTierCandidates_({ tierId: component.tierId, quantity: component.quantity,
         market: options.market, maxAccess: options.maxAccess,
-        paymentMethods: options.paymentMethods, shopIds: options.shopIds }).find(function(c) { return c.shopId === shopId; });
+        paymentMethods: options.paymentMethods,
+        shopMode: 'SELECTED', shopIds: [shopId] }).find(function(c) { return c.shopId === shopId; });
       if (!candidate) { valid = false; return; }
       chosen.push(Object.assign({}, candidate));
     });
