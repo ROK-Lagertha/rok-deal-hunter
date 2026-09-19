@@ -222,16 +222,20 @@ function translateDynamicControls() {
   const access = document.getElementById('access');
   if (access) {
     const accessKeys = {
-      '1': 'ACCESS_1',
-      '2': 'ACCESS_2',
-      '3': 'ACCESS_3',
-      '4': 'ACCESS_4'
+      '1': 'ACCESS_LEVEL_1',
+      '2': 'ACCESS_LEVEL_2',
+      '3': 'ACCESS_LEVEL_3',
+      '4': 'ACCESS_LEVEL_4'
     };
     Array.from(access.options).forEach(function(option) {
       if (accessKeys[option.value]) {
         const translated = t(accessKeys[option.value]);
         if (translated !== accessKeys[option.value]) {
-          option.textContent = option.value + ' — ' + translated;
+          const shortLabel = String(translated)
+            .split(' — ')[0]
+            .trim();
+
+          option.textContent = option.value + ' — ' + shortLabel;
         }
       }
     });

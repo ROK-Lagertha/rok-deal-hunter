@@ -11,6 +11,139 @@
 
   <?!= include('Styles'); ?>
 
+  <style>
+    /* OP-017: compact account-access selector + inline info popover */
+    .access-label-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 19px;
+      margin-bottom: 9px;
+    }
+
+    .access-label-row > label {
+      display: block;
+      margin: 0;
+      color: var(--text-soft);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .access-info {
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .access-info-button {
+      width: 17px;
+      height: 17px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--gold);
+      border-radius: 50%;
+      color: var(--gold);
+      font-size: 10px;
+      font-weight: 900;
+      line-height: 1;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+
+    .access-info-button::-webkit-details-marker {
+      display: none;
+    }
+
+    .access-info-button::marker {
+      display: none;
+      content: "";
+    }
+
+    .access-info-button:hover,
+    .access-info[open] .access-info-button {
+      background: var(--gold-soft);
+    }
+
+    .access-info-popover {
+      position: absolute;
+      z-index: 100;
+      top: 26px;
+      left: -155px;
+      width: min(430px, calc(100vw - 56px));
+      padding: 16px;
+      border: 1px solid rgba(231, 194, 103, .55);
+      border-radius: 13px;
+      background: #0c1422;
+      box-shadow: 0 18px 55px rgba(0, 0, 0, .55);
+      color: var(--text-soft);
+    }
+
+    .access-info-title {
+      margin-bottom: 12px;
+      color: var(--gold);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .access-info-level {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 9px;
+      align-items: start;
+      margin-top: 9px;
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    .access-level-badge {
+      width: 22px;
+      height: 22px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: #1a2a40;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .access-info-hint {
+      margin-top: 13px;
+      padding-top: 11px;
+      border-top: 1px solid var(--border-strong);
+      color: var(--muted);
+      font-size: 9px;
+      font-style: italic;
+      line-height: 1.45;
+    }
+
+    html[dir="rtl"] .access-info-popover {
+      left: auto;
+      right: -155px;
+      text-align: right;
+    }
+
+    @media (max-width: 650px) {
+      .access-info-popover {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        right: auto;
+        width: calc(100vw - 32px);
+        max-width: 430px;
+        transform: translate(-50%, -50%);
+      }
+
+      html[dir="rtl"] .access-info-popover {
+        left: 50%;
+        right: auto;
+      }
+    }
+  </style>
+
 </head>
 
 
@@ -696,9 +829,51 @@
 
     <!-- ACCESS -->
 
-    <label for="access">
-      🔐 <span data-i18n="MAX_ACCESS">Maximum Account Access</span>
-    </label>
+    <div class="access-label-row">
+      <label for="access">
+        🔐 <span data-i18n="MAX_ACCESS">Maximum Account Access</span>
+      </label>
+
+      <details class="access-info">
+        <summary
+          class="access-info-button"
+          aria-label="Access level information"
+          title="Access level information"
+        >
+          i
+        </summary>
+
+        <div class="access-info-popover">
+          <div class="access-info-title" data-i18n="ACCESS_INFO_TITLE">
+            What do the access levels mean?
+          </div>
+
+          <div class="access-info-level" data-level="1">
+            <span class="access-level-badge">1</span>
+            <span data-i18n="ACCESS_LEVEL_1">Level 1 — No RoK account access.</span>
+          </div>
+
+          <div class="access-info-level" data-level="2">
+            <span class="access-level-badge">2</span>
+            <span data-i18n="ACCESS_LEVEL_2">Level 2 — Limited or indirect access.</span>
+          </div>
+
+          <div class="access-info-level" data-level="3">
+            <span class="access-level-badge">3</span>
+            <span data-i18n="ACCESS_LEVEL_3">Level 3 — Player/account data or verification.</span>
+          </div>
+
+          <div class="access-info-level" data-level="4">
+            <span class="access-level-badge">4</span>
+            <span data-i18n="ACCESS_LEVEL_4">Level 4 — Full login access.</span>
+          </div>
+
+          <div class="access-info-hint">
+            ⓘ <span data-i18n="ACCESS_LEVEL_HINT">Lower level = less account access required.</span>
+          </div>
+        </div>
+      </details>
+    </div>
 
 
     <select
@@ -711,11 +886,6 @@
       </option>
 
     </select>
-
-
-    <div class="field-hint">
-      Lower access levels are automatically allowed.
-    </div>
 
 
 
