@@ -475,7 +475,8 @@ function findBestDeal(request) {
   const acceptedPayments = Array.isArray(request.paymentMethods)
     ? request.paymentMethods.map(upper_)
     : ['PAYPAL', 'CARD'];
-  const acceptedShops = Array.isArray(request.shopIds)
+  const shopMode = upper_(request.shopMode || 'ALL');
+  const acceptedShops = shopMode === 'SELECTED' && Array.isArray(request.shopIds)
     ? request.shopIds.map(normalize_).filter(Boolean)
     : [];
   const dealMode = upper_(request.dealMode || 'CHEAPEST');
@@ -522,12 +523,12 @@ function findBestDeal(request) {
   if (dealMode === 'ONE_SHOP') {
     routeResult = findOneShopRoute_({
       components: requiredComponents, market: market, maxAccess: maxAccess,
-      paymentMethods: acceptedPayments, shopIds: acceptedShops
+      paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops
     });
   } else {
     routeResult = findCheapestCartRoute_({
       components: requiredComponents, market: market, maxAccess: maxAccess,
-      paymentMethods: acceptedPayments, shopIds: acceptedShops
+      paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops
     });
   }
 
@@ -553,7 +554,8 @@ function findBestDeal(request) {
 
   return {
     success: true, status: status, packageId: packageId, packageName: packageName,
-    quantity: quantity, market: market, dealMode: dealMode, officialEUR: officialEUR,
+    quantity: quantity, market: market, dealMode: dealMode, shopMode: shopMode,
+    selectedShopIds: acceptedShops, officialEUR: officialEUR,
     bestEUR: bestEUR, knownSubtotalEUR: bestEUR, savingEUR: savingEUR,
     savingPercent: savingPercent, components: finalComponents,
     missingComponents: routeResult.missingComponents || [],
@@ -698,6 +700,38 @@ function getPreferredPriceRows_(prices, shopId, packageId, market, shopMarkets, 
 
 
 /* =========================================================
+   SHOP SELECTION FILTER
+   The user's shop selection can only reduce the already
+   market/access-eligible shop set. It can never add a shop.
+   ========================================================= */
+
+function filterEligibleShopIdsBySelection_(eligibleShopIds, shopMode, shopIds) {
+
+  const mode = upper_(shopMode || 'ALL');
+
+  if (mode !== 'SELECTED') {
+    return eligibleShopIds;
+  }
+
+  const selected = new Set(
+    (Array.isArray(shopIds) ? shopIds : [])
+      .map(normalize_)
+      .filter(Boolean)
+  );
+
+  const filtered = new Set();
+
+  eligibleShopIds.forEach(function(shopId) {
+    if (selected.has(shopId)) {
+      filtered.add(shopId);
+    }
+  });
+
+  return filtered;
+}
+
+
+/* =========================================================
    TIER OPTIMIZER
    ========================================================= */
 
@@ -707,13 +741,11 @@ function getTierCandidates_(options) {
   const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
   const payments = getSheetObjects_(CONFIG.SHEETS.PAYMENTS);
   const markets = getSheetObjects_(CONFIG.SHEETS.MARKETS);
-  const eligibleShopIds = getEligibleShopIds_(shops, shopMarkets, options.market, options.maxAccess);
-  const requestedShopIds = Array.isArray(options.shopIds) ? options.shopIds.map(normalize_).filter(Boolean) : [];
-  if (requestedShopIds.length) {
-    Array.from(eligibleShopIds).forEach(function(shopId) {
-      if (requestedShopIds.indexOf(shopId) === -1) eligibleShopIds.delete(shopId);
-    });
-  }
+  const eligibleShopIds = filterEligibleShopIdsBySelection_(
+    getEligibleShopIds_(shops, shopMarkets, options.market, options.maxAccess),
+    options.shopMode,
+    options.shopIds
+  );
   const candidates = [];
 
   eligibleShopIds.forEach(function(shopId) {
@@ -802,7 +834,8 @@ function priceAssignedComponents_(components) {
 function findCheapestCartRoute_(options) {
   const candidateSets = options.components.map(function(component) {
     return getTierCandidates_({ tierId: component.tierId, quantity: component.quantity,
-      market: options.market, maxAccess: options.maxAccess, paymentMethods: options.paymentMethods, shopIds: options.shopIds });
+      market: options.market, maxAccess: options.maxAccess, paymentMethods: options.paymentMethods,
+      shopMode: options.shopMode, shopIds: options.shopIds });
   });
 
   const missing = [];
@@ -1070,10 +1103,13 @@ function paymentMatches_(code, method) {
 function findOneShopRoute_(options) {
   const shops = getSheetObjects_(CONFIG.SHEETS.SHOPS);
   const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
-  let eligibleShopIds = Array.from(getEligibleShopIds_(shops, shopMarkets,
-    options.market, options.maxAccess));
-  const requestedShopIds = Array.isArray(options.shopIds) ? options.shopIds.map(normalize_).filter(Boolean) : [];
-  if (requestedShopIds.length) eligibleShopIds = eligibleShopIds.filter(function(id){ return requestedShopIds.indexOf(id) !== -1; });
+  const eligibleShopIds = Array.from(
+    filterEligibleShopIdsBySelection_(
+      getEligibleShopIds_(shops, shopMarkets, options.market, options.maxAccess),
+      options.shopMode,
+      options.shopIds
+    )
+  );
   const routes = [];
 
   eligibleShopIds.forEach(function(shopId) {
