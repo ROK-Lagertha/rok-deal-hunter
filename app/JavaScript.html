@@ -1405,6 +1405,18 @@ function huntDeal() {
   }
 
 
+  if (!settings.shopIds.length) {
+
+    alert(
+      translatedOr_('SELECT_SHOP_FIRST', 'Please select at least one shop.')
+    );
+
+    openSettings();
+
+    return;
+  }
+
+
   if (!settings.paymentMethods.length) {
 
     alert(
@@ -1433,6 +1445,12 @@ function huntDeal() {
 
     maxAccess:
       settings.maxAccess,
+
+    shopMode:
+      settings.shopMode,
+
+    shopIds:
+      settings.shopIds,
 
     paymentMethods:
       settings.paymentMethods,

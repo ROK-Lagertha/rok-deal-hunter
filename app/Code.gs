@@ -317,18 +317,20 @@ function getBootstrapData() {
         firstValue_(row, ['Active', 'Enabled'])
       );
 
-      const type = upper_(
-        firstValue_(row, ['Type'])
+      const frontendVisible = boolean_(
+        firstValue_(row, ['Frontend Visible'])
       );
 
       /*
-       * Internal generic tiers and gem lookup packages
-       * are not shown in the normal package selector.
+       * The Packages sheet is the authoritative product catalog.
+       * Only active products explicitly marked for the frontend
+       * are shown in the package selector.
+       *
+       * Shop-specific vouchers, funding routes and value-credit
+       * routes remain in the data model but stay hidden here.
        */
 
-      return active &&
-        !upper_(firstValue_(row, ['Package ID'])).startsWith('TIER_') &&
-        !upper_(firstValue_(row, ['Package ID'])).startsWith('GEM_');
+      return active && frontendVisible;
     })
     .map(function(row) {
 
@@ -473,6 +475,9 @@ function findBestDeal(request) {
   const acceptedPayments = Array.isArray(request.paymentMethods)
     ? request.paymentMethods.map(upper_)
     : ['PAYPAL', 'CARD'];
+  const acceptedShops = Array.isArray(request.shopIds)
+    ? request.shopIds.map(normalize_).filter(Boolean)
+    : [];
   const dealMode = upper_(request.dealMode || 'CHEAPEST');
 
   if (!packageId) throw new Error('No package selected.');
@@ -517,12 +522,12 @@ function findBestDeal(request) {
   if (dealMode === 'ONE_SHOP') {
     routeResult = findOneShopRoute_({
       components: requiredComponents, market: market, maxAccess: maxAccess,
-      paymentMethods: acceptedPayments
+      paymentMethods: acceptedPayments, shopIds: acceptedShops
     });
   } else {
     routeResult = findCheapestCartRoute_({
       components: requiredComponents, market: market, maxAccess: maxAccess,
-      paymentMethods: acceptedPayments
+      paymentMethods: acceptedPayments, shopIds: acceptedShops
     });
   }
 
@@ -532,7 +537,7 @@ function findBestDeal(request) {
   if (mappingMode === 'COMPOSITE') {
     const direct = findCheapestCartRoute_({
       components: [{ tierId: packageId, quantity: quantity }],
-      market: market, maxAccess: maxAccess, paymentMethods: acceptedPayments
+      market: market, maxAccess: maxAccess, paymentMethods: acceptedPayments, shopIds: acceptedShops
     });
     if (direct.found && (!routeResult.found || direct.totalEUR < routeResult.totalEUR)) {
       routeResult = direct;
@@ -703,6 +708,12 @@ function getTierCandidates_(options) {
   const payments = getSheetObjects_(CONFIG.SHEETS.PAYMENTS);
   const markets = getSheetObjects_(CONFIG.SHEETS.MARKETS);
   const eligibleShopIds = getEligibleShopIds_(shops, shopMarkets, options.market, options.maxAccess);
+  const requestedShopIds = Array.isArray(options.shopIds) ? options.shopIds.map(normalize_).filter(Boolean) : [];
+  if (requestedShopIds.length) {
+    Array.from(eligibleShopIds).forEach(function(shopId) {
+      if (requestedShopIds.indexOf(shopId) === -1) eligibleShopIds.delete(shopId);
+    });
+  }
   const candidates = [];
 
   eligibleShopIds.forEach(function(shopId) {
@@ -791,7 +802,7 @@ function priceAssignedComponents_(components) {
 function findCheapestCartRoute_(options) {
   const candidateSets = options.components.map(function(component) {
     return getTierCandidates_({ tierId: component.tierId, quantity: component.quantity,
-      market: options.market, maxAccess: options.maxAccess, paymentMethods: options.paymentMethods });
+      market: options.market, maxAccess: options.maxAccess, paymentMethods: options.paymentMethods, shopIds: options.shopIds });
   });
 
   const missing = [];
@@ -928,87 +939,23 @@ function paymentMethodCode_(method) {
   return m.replace(/[^A-Z0-9]+/g, '_');
 }
 
-
-/* =========================================================
-   SHOP OPTIONS BY MARKET
-   Stage 2: UI eligibility only. The Deal Engine does not yet
-   filter by the user's selected shop IDs.
-   ========================================================= */
-
 function getShopOptionsForMarket(market, maxAccess) {
-
-  const requestedMarket = upper_(market);
-  const accessLimit = Number(maxAccess || 3);
-
-  if (!requestedMarket) {
-    return [];
-  }
-
+  market = upper_(market || 'DE');
+  maxAccess = Math.min(4, Math.max(1, parseInt(maxAccess || 3, 10)));
   const shops = getSheetObjects_(CONFIG.SHEETS.SHOPS);
   const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
-
-  const shopById = {};
-
-  shops.forEach(function(row) {
-
-    const id = upper_(firstValue_(row, ['Shop ID']));
-
-    if (!id) return;
-
-    shopById[id] = {
+  const eligible = getEligibleShopIds_(shops, shopMarkets, market, maxAccess);
+  return shops.filter(function(row) {
+    return eligible.has(normalize_(firstValue_(row, ['Shop ID'])));
+  }).map(function(row) {
+    const id = normalize_(firstValue_(row, ['Shop ID']));
+    return {
       id: id,
-      name: normalize_(firstValue_(row, ['Shop', 'Name'])) || id,
-      active: boolean_(firstValue_(row, ['Active', 'Enabled'])),
-      accessLevel: Number(firstValue_(row, ['Access Level'])) || 99,
-      coverageStatus: upper_(firstValue_(row, ['Coverage Status']))
+      name: normalize_(firstValue_(row, ['Shop'])) || id,
+      accessLevel: getMarketAccessLevel_(row, shopMarkets, id, market)
     };
-  });
-
-  const eligibleAvailability = {
-    'AVAILABLE': true,
-    'AVAILABLE_GLOBAL': true,
-    'AVAILABLE_GLOBAL_EUR': true,
-    'AVAILABLE_LOCALIZED': true
-  };
-
-  const resultById = {};
-
-  shopMarkets.forEach(function(row) {
-
-    const rowMarket = upper_(firstValue_(row, ['Market Code', 'Market']));
-    const shopId = upper_(firstValue_(row, ['Shop ID']));
-    const availability = upper_(firstValue_(row, ['Availability']));
-    const routeAccess = Number(firstValue_(row, ['Access Level'])) || 99;
-    const shop = shopById[shopId];
-
-    if (rowMarket !== requestedMarket) return;
-    if (!eligibleAvailability[availability]) return;
-    if (!shop || !shop.active) return;
-
-    const effectiveAccess = Math.max(shop.accessLevel, routeAccess);
-
-    if (effectiveAccess > accessLimit) return;
-
-    resultById[shopId] = {
-      id: shopId,
-      name: shop.name,
-      accessLevel: effectiveAccess,
-      availability: availability,
-      currency: upper_(firstValue_(row, ['Charged Currency', 'Currency'])),
-      routeType: upper_(firstValue_(row, ['Route Type', 'Route/Mapping'])),
-      url: normalize_(firstValue_(row, ['Purchase URL', 'URL']))
-    };
-  });
-
-  return Object.keys(resultById)
-    .map(function(id) {
-      return resultById[id];
-    })
-    .sort(function(a, b) {
-      return a.name.localeCompare(b.name);
-    });
+  }).sort(function(a,b){ return a.name.localeCompare(b.name); });
 }
-
 
 function getPaymentOptionsForMarket(market, maxAccess) {
   market = upper_(market || 'DE');
@@ -1123,8 +1070,10 @@ function paymentMatches_(code, method) {
 function findOneShopRoute_(options) {
   const shops = getSheetObjects_(CONFIG.SHEETS.SHOPS);
   const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
-  const eligibleShopIds = Array.from(getEligibleShopIds_(shops, shopMarkets,
+  let eligibleShopIds = Array.from(getEligibleShopIds_(shops, shopMarkets,
     options.market, options.maxAccess));
+  const requestedShopIds = Array.isArray(options.shopIds) ? options.shopIds.map(normalize_).filter(Boolean) : [];
+  if (requestedShopIds.length) eligibleShopIds = eligibleShopIds.filter(function(id){ return requestedShopIds.indexOf(id) !== -1; });
   const routes = [];
 
   eligibleShopIds.forEach(function(shopId) {
@@ -1133,7 +1082,7 @@ function findOneShopRoute_(options) {
     options.components.forEach(function(component) {
       const candidate = getTierCandidates_({ tierId: component.tierId, quantity: component.quantity,
         market: options.market, maxAccess: options.maxAccess,
-        paymentMethods: options.paymentMethods }).find(function(c) { return c.shopId === shopId; });
+        paymentMethods: options.paymentMethods, shopIds: options.shopIds }).find(function(c) { return c.shopId === shopId; });
       if (!candidate) { valid = false; return; }
       chosen.push(Object.assign({}, candidate));
     });
