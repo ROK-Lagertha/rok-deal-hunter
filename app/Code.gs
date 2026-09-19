@@ -1,0 +1,1119 @@
+const CONFIG = {
+  SPREADSHEET_ID: '1cvqYpz-CGfDuzJXUKYyutqszhmqdjeemDlVrnG3wjmI',
+  APP_NAME: 'RoK Deal Hunter',
+
+  SHEETS: {
+    PACKAGES: 'Packages',
+    SHOPS: 'Shops',
+    PRICES: 'Prices',
+    PAYMENTS: 'Payments',
+    COUPONS: 'Coupons',
+    COMPONENTS: 'Package Components',
+    SHOP_MARKETS: 'Shop Markets',
+    TRANSLATIONS: 'Translations',
+    MARKETS: 'Markets',
+    CURRENCIES: 'Currencies',
+    PAYMENT_MARKETS: 'Payment Markets'
+  }
+};
+
+
+/* =========================================================
+   WEB APP
+   ========================================================= */
+
+function doGet() {
+  return HtmlService
+    .createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle(CONFIG.APP_NAME)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+
+function include(filename) {
+  return HtmlService
+    .createHtmlOutputFromFile(filename)
+    .getContent();
+}
+
+
+/* =========================================================
+   SPREADSHEET HELPERS
+   ========================================================= */
+
+function getSpreadsheet_() {
+  return SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+}
+
+
+function getSheetObjects_(sheetName) {
+
+  const sheet = getSpreadsheet_().getSheetByName(sheetName);
+
+  if (!sheet) {
+    throw new Error('Sheet not found: ' + sheetName);
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (values.length < 2) {
+    return [];
+  }
+
+  const headers = values[0].map(function(header) {
+    return String(header).trim();
+  });
+
+  return values.slice(1)
+    .filter(function(row) {
+      return row.some(function(cell) {
+        return cell !== '' && cell !== null;
+      });
+    })
+    .map(function(row) {
+
+      const obj = {};
+
+      headers.forEach(function(header, index) {
+        obj[header] = row[index];
+      });
+
+      return obj;
+    });
+}
+
+
+function marketCodeMatches_(storedMarket, requestedMarket) {
+
+  const requested = normalize_(requestedMarket);
+
+  return String(storedMarket || '')
+    .split('|')
+    .map(function(value) {
+      return normalize_(value);
+    })
+    .filter(Boolean)
+    .indexOf(requested) !== -1;
+}
+
+
+function normalize_(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+
+function upper_(value) {
+  return normalize_(value).toUpperCase();
+}
+
+
+function number_(value) {
+
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  if (value === '' || value == null) {
+    return null;
+  }
+
+  const cleaned = String(value)
+    .replace(/\s/g, '')
+    .replace(/€/g, '')
+    .replace(/%/g, '')
+    .replace(',', '.');
+
+  const parsed = Number(cleaned);
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+
+function boolean_(value) {
+
+  if (value === true) return true;
+  if (value === false) return false;
+
+  const text = upper_(value);
+
+  return (
+    text === 'TRUE' ||
+    text === 'YES' ||
+    text === 'JA' ||
+    text === '1'
+  );
+}
+
+
+function firstValue_(object, names) {
+
+  for (let i = 0; i < names.length; i++) {
+
+    const key = names[i];
+
+    if (
+      Object.prototype.hasOwnProperty.call(object, key) &&
+      object[key] !== '' &&
+      object[key] != null
+    ) {
+      return object[key];
+    }
+  }
+
+  return '';
+}
+
+
+/* =========================================================
+   TRANSLATIONS / I18N
+   ========================================================= */
+
+function getTranslations_() {
+
+  const sheet = getSpreadsheet_().getSheetByName(CONFIG.SHEETS.TRANSLATIONS);
+
+  if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 2) {
+    return {
+      languages: [],
+      translations: {}
+    };
+  }
+
+  const values = sheet.getDataRange().getDisplayValues();
+  const headers = values[0].map(normalize_);
+
+  const languageColumns = [];
+
+  for (let column = 1; column < headers.length; column++) {
+
+    const language = headers[column];
+
+    if (language && upper_(language) !== 'NOTES') {
+      languageColumns.push({
+        name: language,
+        column: column
+      });
+    }
+  }
+
+  const translations = {};
+
+  languageColumns.forEach(function(language) {
+    translations[language.name] = {};
+  });
+
+  values.slice(1).forEach(function(row) {
+
+    const key = normalize_(row[0]);
+
+    if (!key) return;
+
+    languageColumns.forEach(function(language) {
+
+      const value = normalize_(row[language.column]);
+
+      if (value) {
+        translations[language.name][key] = value;
+      }
+    });
+  });
+
+  return {
+    languages: languageColumns.map(function(language) {
+      return language.name;
+    }),
+    translations: translations
+  };
+}
+
+
+function getLanguageMeta_() {
+
+  return {
+    'Deutsch': { code: 'de', dir: 'ltr' },
+    'English': { code: 'en', dir: 'ltr' },
+    'Français': { code: 'fr', dir: 'ltr' },
+    'Español': { code: 'es', dir: 'ltr' },
+    'العربية': { code: 'ar', dir: 'rtl' },
+    'Türkçe': { code: 'tr', dir: 'ltr' },
+    'Русский': { code: 'ru', dir: 'ltr' },
+    'Українська': { code: 'uk', dir: 'ltr' },
+    'Oʻzbekcha': { code: 'uz', dir: 'ltr' },
+    'ไทย': { code: 'th', dir: 'ltr' },
+    'Tiếng Việt': { code: 'vi', dir: 'ltr' },
+    'Bahasa Indonesia': { code: 'id', dir: 'ltr' },
+    'Bahasa Melayu': { code: 'ms', dir: 'ltr' },
+    'සිංහල': { code: 'si', dir: 'ltr' },
+    'தமிழ்': { code: 'ta', dir: 'ltr' },
+    'Português (Brasil)': { code: 'pt-BR', dir: 'ltr' },
+    'Nederlands': { code: 'nl', dir: 'ltr' },
+    'Қазақша': { code: 'kk', dir: 'ltr' },
+  'Suomi': { code: 'fi', dir: 'ltr' }
+  };
+}
+
+
+/* =========================================================
+   BACKEND TEST
+   ========================================================= */
+
+function testBackendConnection() {
+
+  const spreadsheet = getSpreadsheet_();
+
+  const requiredSheets = [
+    CONFIG.SHEETS.PACKAGES,
+    CONFIG.SHEETS.SHOPS,
+    CONFIG.SHEETS.PRICES,
+    CONFIG.SHEETS.PAYMENTS,
+    CONFIG.SHEETS.COMPONENTS,
+    CONFIG.SHEETS.SHOP_MARKETS,
+    CONFIG.SHEETS.TRANSLATIONS
+  ];
+
+  const found = [];
+  const missing = [];
+
+  requiredSheets.forEach(function(sheetName) {
+
+    if (spreadsheet.getSheetByName(sheetName)) {
+      found.push(sheetName);
+    } else {
+      missing.push(sheetName);
+    }
+  });
+
+  const result = {
+    success: missing.length === 0,
+    spreadsheet: spreadsheet.getName(),
+    foundSheets: found,
+    missingSheets: missing,
+    timestamp: new Date().toISOString()
+  };
+
+  console.log(JSON.stringify(result, null, 2));
+
+  return result;
+}
+
+
+/* =========================================================
+   BOOTSTRAP DATA
+   Data required when the website loads
+   ========================================================= */
+
+function getBootstrapData() {
+
+  const packages = getSheetObjects_(CONFIG.SHEETS.PACKAGES);
+  const translationData = getTranslations_();
+  const marketRows = getSheetObjects_(CONFIG.SHEETS.MARKETS);
+  const currencyRows = getSheetObjects_(CONFIG.SHEETS.CURRENCIES);
+
+  const packageList = packages
+    .filter(function(row) {
+
+      const active = boolean_(
+        firstValue_(row, ['Active', 'Enabled'])
+      );
+
+      const type = upper_(
+        firstValue_(row, ['Type'])
+      );
+
+      /*
+       * Internal generic tiers and gem lookup packages
+       * are not shown in the normal package selector.
+       */
+
+      return active &&
+        !upper_(firstValue_(row, ['Package ID'])).startsWith('TIER_') &&
+        !upper_(firstValue_(row, ['Package ID'])).startsWith('GEM_');
+    })
+    .map(function(row) {
+
+      return {
+        id: normalize_(firstValue_(row, ['Package ID'])),
+        name: normalize_(firstValue_(row, ['Package'])),
+        referenceEUR: number_(
+          firstValue_(row, ['Reference EUR'])
+        ),
+        mappingMode: upper_(
+          firstValue_(row, ['Mapping Mode'])
+        )
+      };
+    });
+
+
+  /*
+   * Markets come from the authoritative Markets sheet.
+   * This keeps the market selector aligned with all supported UI regions,
+   * even when a market has no optimizer-eligible shop yet.
+   */
+
+  const markets = marketRows
+    .filter(function(row) {
+      return boolean_(firstValue_(row, ['Active', 'Enabled']));
+    })
+    .map(function(row) {
+      return {
+        code: upper_(firstValue_(row, ['Market Code', 'Code'])),
+        name: normalize_(firstValue_(row, ['Market', 'Name'])),
+        defaultCurrency: upper_(firstValue_(row, ['Default Currency', 'Currency']))
+      };
+    })
+    .filter(function(item) {
+      return item.code && item.name;
+    })
+    .sort(function(a, b) {
+      return a.name.localeCompare(b.name);
+    });
+
+
+  /*
+   * Currency values also come from the authoritative Currencies sheet.
+   * The frontend receives both the ISO code and a human-readable name.
+   */
+
+  const currencies = currencyRows
+    .filter(function(row) {
+      return boolean_(firstValue_(row, ['Active', 'Enabled']));
+    })
+    .map(function(row) {
+      return {
+        code: upper_(firstValue_(row, ['Currency Code', 'Code'])),
+        name: normalize_(firstValue_(row, ['Currency', 'Name'])),
+        symbol: normalize_(firstValue_(row, ['Symbol'])),
+        unitsPerEUR: number_(firstValue_(row, ['Units per EUR'])) || (upper_(firstValue_(row, ['Currency Code', 'Code'])) === 'EUR' ? 1 : null)
+      };
+    })
+    .filter(function(item) {
+      return item.code && item.name;
+    });
+
+  /*
+   * Languages and UI translations come from the Translations sheet.
+   * English is used by the frontend as the fallback language.
+   */
+
+  const languages = translationData.languages;
+  const translations = translationData.translations;
+  const languageMeta = getLanguageMeta_();
+
+  return {
+    success: true,
+
+    packages: packageList,
+
+    markets: markets,
+
+    languages: languages,
+
+    translations: translations,
+
+    languageMeta: languageMeta,
+
+    fallbackLanguage: 'English',
+
+    currencies: currencies,
+
+    /* Payment controls are country-driven. The frontend loads them only
+       after the selected market and access level are known. */
+    paymentMethods: [],
+
+    accessLevels: [
+      {
+        level: 1,
+        name: 'UID only'
+      },
+      {
+        level: 2,
+        name: 'Verification allowed'
+      },
+      {
+        level: 3,
+        name: 'Self-login allowed'
+      },
+      {
+        level: 4,
+        name: 'Operator access allowed'
+      }
+    ],
+
+    dealModes: [
+      {
+        code: 'CHEAPEST',
+        name: 'Cheapest'
+      },
+      {
+        code: 'ONE_SHOP',
+        name: 'One shop only'
+      },
+      {
+        code: 'SIMPLE',
+        name: 'Simple'
+      }
+    ]
+  };
+}
+
+
+/* =========================================================
+   MAIN DEAL ENGINE
+   ========================================================= */
+
+function findBestDeal(request) {
+
+  request = request || {};
+
+  const packageId = normalize_(request.packageId);
+  const quantity = Math.max(1, parseInt(request.quantity || 1, 10));
+  const market = upper_(request.market || 'DE');
+  const maxAccess = Math.min(4, Math.max(1, parseInt(request.maxAccess || 3, 10)));
+  const acceptedPayments = Array.isArray(request.paymentMethods)
+    ? request.paymentMethods.map(upper_)
+    : ['PAYPAL', 'CARD'];
+  const dealMode = upper_(request.dealMode || 'CHEAPEST');
+
+  if (!packageId) throw new Error('No package selected.');
+
+  const packages = getSheetObjects_(CONFIG.SHEETS.PACKAGES);
+  const components = getSheetObjects_(CONFIG.SHEETS.COMPONENTS);
+  const packageRow = packages.find(function(row) {
+    return normalize_(firstValue_(row, ['Package ID'])) === packageId;
+  });
+  if (!packageRow) throw new Error('Unknown package: ' + packageId);
+
+  const packageName = normalize_(firstValue_(packageRow, ['Package']));
+  const referenceEUR = number_(firstValue_(packageRow, ['Reference EUR']));
+  const mappingMode = upper_(firstValue_(packageRow, ['Mapping Mode']));
+  let requiredComponents = [];
+
+  if (mappingMode === 'COMPOSITE') {
+    requiredComponents = components.filter(function(row) {
+      return normalize_(firstValue_(row, ['Composite Package ID'])) === packageId;
+    }).map(function(row) {
+      return {
+        tierId: normalize_(firstValue_(row, ['Component Tier ID'])),
+        quantity: (number_(firstValue_(row, ['Quantity'])) || 1) * quantity
+      };
+    });
+  } else {
+    const lookupId = normalize_(firstValue_(packageRow, ['Price Lookup ID'])) || packageId;
+    requiredComponents = [{ tierId: lookupId, quantity: quantity }];
+  }
+
+  if (!requiredComponents.length) {
+    return { success: true, status: 'ROUTE_NOT_BUILT', packageId: packageId,
+      packageName: packageName, message: 'No component route exists for this package.' };
+  }
+
+  /*
+   * IMPORTANT: Checkout fees are cart/order costs, not item costs.
+   * We therefore build candidate assignments first and apply the payment
+   * percentage + fixed fee exactly once per shop cart.
+   */
+  let routeResult;
+  if (dealMode === 'ONE_SHOP') {
+    routeResult = findOneShopRoute_({
+      components: requiredComponents, market: market, maxAccess: maxAccess,
+      paymentMethods: acceptedPayments
+    });
+  } else {
+    routeResult = findCheapestCartRoute_({
+      components: requiredComponents, market: market, maxAccess: maxAccess,
+      paymentMethods: acceptedPayments
+    });
+  }
+
+  /* A composite may also be sold directly as one SKU. Compare that direct
+     offer against the decomposed route. This prevents an All-in-One bundle
+     from losing merely because its component route exists. */
+  if (mappingMode === 'COMPOSITE') {
+    const direct = findCheapestCartRoute_({
+      components: [{ tierId: packageId, quantity: quantity }],
+      market: market, maxAccess: maxAccess, paymentMethods: acceptedPayments
+    });
+    if (direct.found && (!routeResult.found || direct.totalEUR < routeResult.totalEUR)) {
+      routeResult = direct;
+    }
+  }
+
+  const finalComponents = routeResult.found ? routeResult.components : [];
+  const status = routeResult.found ? 'COMPLETE' : 'NO_ELIGIBLE_DEAL';
+  const bestEUR = routeResult.found ? routeResult.totalEUR : null;
+  const officialEUR = referenceEUR != null ? referenceEUR * quantity : null;
+  const savingEUR = (bestEUR != null && officialEUR != null) ? officialEUR - bestEUR : null;
+  const savingPercent = (savingEUR != null && officialEUR > 0) ? (savingEUR / officialEUR) * 100 : null;
+
+  return {
+    success: true, status: status, packageId: packageId, packageName: packageName,
+    quantity: quantity, market: market, dealMode: dealMode, officialEUR: officialEUR,
+    bestEUR: bestEUR, knownSubtotalEUR: bestEUR, savingEUR: savingEUR,
+    savingPercent: savingPercent, components: finalComponents,
+    missingComponents: routeResult.missingComponents || [],
+    routes: groupRoutesByShop_(finalComponents), generatedAt: new Date().toISOString()
+  };
+}
+
+/* =========================================================
+   MARKET-AWARE PRICE FALLBACK
+   ========================================================= */
+
+function getMarketCurrency_(markets, market) {
+  const code = upper_(market);
+  const row = markets.find(function(item) {
+    return upper_(firstValue_(item, ['Market Code', 'Code'])) === code;
+  });
+  return row ? upper_(firstValue_(row, [
+    'Default Currency',
+    'Currency Code',
+    'Currency'
+  ])) : '';
+}
+
+
+function isAvailableMarketConfig_(row) {
+  if (!row) return false;
+
+  const availability = upper_(firstValue_(row, ['Availability']));
+  const eligible = boolean_(firstValue_(row, [
+    'Eligible for Optimizer',
+    'Optimizer Eligible'
+  ]));
+
+  if (!eligible) return false;
+
+  /* Explicit negative / pending states must never become a fallback. */
+  if (
+    availability.indexOf('PENDING') !== -1 ||
+    availability.indexOf('VERIFY') !== -1 ||
+    availability.indexOf('STOCK_VARIABLE') !== -1 ||
+    availability.indexOf('INDIRECT') !== -1 ||
+    availability.indexOf('UNAVAILABLE') !== -1
+  ) {
+    return false;
+  }
+
+  return availability.indexOf('AVAILABLE') !== -1;
+}
+
+
+function getShopMarketConfig_(shopMarkets, shopId, market) {
+  const normalizedShopId = normalize_(shopId);
+  const normalizedMarket = upper_(market);
+
+  const rows = shopMarkets.filter(function(row) {
+    return normalize_(firstValue_(row, ['Shop ID'])) === normalizedShopId;
+  });
+
+  const exact = rows.find(function(row) {
+    return upper_(firstValue_(row, ['Market Code', 'Market', 'Country Code'])) === normalizedMarket;
+  });
+
+  /* An explicit usable country route always wins. */
+  if (isAvailableMarketConfig_(exact)) return exact;
+
+  const global = rows.find(function(row) {
+    return upper_(firstValue_(row, ['Market Code', 'Market', 'Country Code'])) === 'GLOBAL';
+  });
+
+  /* If the country row is only incomplete/pending, a verified global route
+     may still serve that country. This is the core all-market fallback. */
+  if (isAvailableMarketConfig_(global)) return global;
+
+  return null;
+}
+
+
+function getPreferredPriceRows_(prices, shopId, packageId, market, shopMarkets, markets) {
+  const requestedMarket = upper_(market);
+  const marketCurrency = getMarketCurrency_(markets, requestedMarket);
+  const marketConfig = getShopMarketConfig_(shopMarkets, shopId, requestedMarket);
+
+  if (!marketConfig) return [];
+
+  const routeCurrency = upper_(firstValue_(marketConfig, ['Charged Currency']));
+  const base = prices.filter(function(row) {
+    return normalize_(firstValue_(row, ['Shop ID'])) === shopId &&
+      normalize_(firstValue_(row, ['Package ID'])) === packageId &&
+      boolean_(firstValue_(row, ['Verified']));
+  });
+
+  if (!base.length) return [];
+
+  function rank(row) {
+    const storedMarket = upper_(firstValue_(row, ['Market Code']));
+    const currency = upper_(firstValue_(row, ['Currency']));
+
+    /* 1. Country-specific price is authoritative. */
+    if (marketCodeMatches_(storedMarket, requestedMarket)) return 0;
+
+    /* 2. Explicit GLOBAL/ALL price is the canonical fallback. */
+    if (marketCodeMatches_(storedMarket, 'GLOBAL') || marketCodeMatches_(storedMarket, 'ALL')) return 1;
+
+    /* 3. Use the currency declared by the resolved Shop Markets route.
+          This makes AVAILABLE_GLOBAL_EUR work for every EUR market and
+          GLOBAL/USD work for worldwide routes without hard-coding countries. */
+    if (routeCurrency && routeCurrency !== 'TO_VERIFY' && currency === routeCurrency) return 2;
+
+    /* 4. If the route does not declare a usable currency, use the market's
+          default currency from Markets (e.g. EUR for NL/FI/AT/BE). */
+    if (marketCurrency && currency === marketCurrency) return 3;
+
+    return 99;
+  }
+
+  let bestRank = 99;
+  base.forEach(function(row) {
+    bestRank = Math.min(bestRank, rank(row));
+  });
+
+  if (bestRank === 99) return [];
+
+  let preferred = base.filter(function(row) {
+    return rank(row) === bestRank;
+  });
+
+  /* Keep only the newest capture inside the selected route/currency. */
+  let newest = '';
+  preferred.forEach(function(row) {
+    const stamp = normalize_(firstValue_(row, ['Timestamp', 'Verified At']));
+    if (stamp > newest) newest = stamp;
+  });
+
+  if (newest) {
+    preferred = preferred.filter(function(row) {
+      return normalize_(firstValue_(row, ['Timestamp', 'Verified At'])) === newest;
+    });
+  }
+
+  return preferred;
+}
+
+
+/* =========================================================
+   TIER OPTIMIZER
+   ========================================================= */
+
+function getTierCandidates_(options) {
+  const prices = getSheetObjects_(CONFIG.SHEETS.PRICES);
+  const shops = getSheetObjects_(CONFIG.SHEETS.SHOPS);
+  const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
+  const payments = getSheetObjects_(CONFIG.SHEETS.PAYMENTS);
+  const markets = getSheetObjects_(CONFIG.SHEETS.MARKETS);
+  const eligibleShopIds = getEligibleShopIds_(shops, shopMarkets, options.market, options.maxAccess);
+  const candidates = [];
+
+  eligibleShopIds.forEach(function(shopId) {
+    const shop = shops.find(function(row) {
+      return normalize_(firstValue_(row, ['Shop ID'])) === shopId;
+    });
+    if (!shop) return;
+
+    const payment = selectPayment_(shopId, options.paymentMethods, payments);
+    /* Unknown checkout cost must never be silently treated as zero. */
+    if (!payment.compatible || payment.status !== 'COST_VERIFIED') return;
+
+    const preferredRows = getPreferredPriceRows_(prices, shopId, options.tierId,
+      options.market, shopMarkets, markets);
+
+    let best = null;
+    preferredRows.forEach(function(priceRow) {
+      /* Final EUR is the merchandise price after the stored coupon. Payment
+         cost is deliberately NOT taken from Checkout Effective EUR here,
+         because fixed checkout fees belong to the cart, not every item. */
+      let unitBaseEUR = number_(firstValue_(priceRow, ['Final EUR']));
+      if (unitBaseEUR == null) unitBaseEUR = number_(firstValue_(priceRow, ['Price EUR']));
+      if (unitBaseEUR == null) return;
+
+      const candidate = {
+        found: true, tierId: options.tierId, quantity: options.quantity,
+        shopId: shopId, shopName: normalize_(firstValue_(shop, ['Shop'])),
+        purchaseUrl: getMarketPurchaseUrl_(shop, shopMarkets, shopId, options.market),
+        accessLevel: getMarketAccessLevel_(shop, shopMarkets, shopId, options.market),
+        payment: payment.method, paymentStatus: payment.status,
+        paymentRate: payment.rate || 0, paymentFixedEUR: payment.fixedEUR || 0,
+        coupon: normalize_(firstValue_(priceRow, ['Coupon'])),
+        unitBaseEUR: unitBaseEUR, unitPriceEUR: unitBaseEUR,
+        merchandiseSubtotalEUR: unitBaseEUR * options.quantity,
+        subtotalEUR: unitBaseEUR * options.quantity,
+        priceStatus: marketCodeMatches_(firstValue_(priceRow, ['Market Code']), options.market)
+          ? 'VERIFIED_MARKET' : 'VERIFIED_GLOBAL_FALLBACK'
+      };
+      if (!best || candidate.merchandiseSubtotalEUR < best.merchandiseSubtotalEUR) best = candidate;
+    });
+    if (best) candidates.push(best);
+  });
+  return candidates;
+}
+
+function findBestTierDeal_(options) {
+  const candidates = getTierCandidates_(options);
+  if (!candidates.length) return { found: false, tierId: options.tierId,
+    quantity: options.quantity, status: 'NO_ELIGIBLE_DEAL' };
+
+  /* Single-tier convenience result. Fixed payment fee is applied once. */
+  candidates.forEach(function(c) {
+    const fee = c.merchandiseSubtotalEUR * c.paymentRate + c.paymentFixedEUR;
+    c.paymentFeeEUR = fee;
+    c.subtotalEUR = c.merchandiseSubtotalEUR + fee;
+    c.unitPriceEUR = c.subtotalEUR / c.quantity;
+  });
+  candidates.sort(function(a, b) { return a.subtotalEUR - b.subtotalEUR; });
+  return candidates[0];
+}
+
+function priceAssignedComponents_(components) {
+  const carts = {};
+  components.forEach(function(item) {
+    if (!carts[item.shopId]) carts[item.shopId] = { merchandise: 0, items: [] };
+    carts[item.shopId].merchandise += item.merchandiseSubtotalEUR;
+    carts[item.shopId].items.push(item);
+  });
+
+  let total = 0;
+  Object.keys(carts).forEach(function(shopId) {
+    const cart = carts[shopId];
+    const sample = cart.items[0];
+    const fee = cart.merchandise * (sample.paymentRate || 0) + (sample.paymentFixedEUR || 0);
+    cart.items.forEach(function(item) {
+      const share = cart.merchandise > 0 ? item.merchandiseSubtotalEUR / cart.merchandise : 0;
+      item.paymentFeeEUR = fee * share;
+      item.subtotalEUR = item.merchandiseSubtotalEUR + item.paymentFeeEUR;
+      item.unitPriceEUR = item.subtotalEUR / item.quantity;
+    });
+    total += cart.merchandise + fee;
+  });
+  return total;
+}
+
+function findCheapestCartRoute_(options) {
+  const candidateSets = options.components.map(function(component) {
+    return getTierCandidates_({ tierId: component.tierId, quantity: component.quantity,
+      market: options.market, maxAccess: options.maxAccess, paymentMethods: options.paymentMethods });
+  });
+
+  const missing = [];
+  candidateSets.forEach(function(set, i) {
+    if (!set.length) missing.push({ found: false, tierId: options.components[i].tierId,
+      quantity: options.components[i].quantity, status: 'NO_ELIGIBLE_DEAL' });
+  });
+  if (missing.length) return { found: false, missingComponents: missing };
+
+  let best = null;
+  function walk(index, chosen) {
+    if (index === candidateSets.length) {
+      const copy = chosen.map(function(x) { return Object.assign({}, x); });
+      const total = priceAssignedComponents_(copy);
+      if (!best || total < best.totalEUR) best = { found: true, totalEUR: total, components: copy };
+      return;
+    }
+    candidateSets[index].forEach(function(candidate) {
+      chosen.push(candidate); walk(index + 1, chosen); chosen.pop();
+    });
+  }
+  walk(0, []);
+  return best || { found: false, missingComponents: missing };
+}
+
+/* =========================================================
+   MARKET-SPECIFIC SHOP CONFIG
+   ========================================================= */
+
+function getMarketPurchaseUrl_(shop, shopMarkets, shopId, market) {
+  const marketConfig = getShopMarketConfig_(shopMarkets, shopId, market);
+  const marketUrl = marketConfig
+    ? normalize_(firstValue_(marketConfig, ['Purchase URL', 'URL']))
+    : '';
+  return marketUrl || normalize_(firstValue_(shop, ['URL']));
+}
+
+function getMarketAccessLevel_(shop, shopMarkets, shopId, market) {
+  const marketConfig = getShopMarketConfig_(shopMarkets, shopId, market);
+  const marketAccess = marketConfig
+    ? number_(firstValue_(marketConfig, ['Access Level']))
+    : null;
+  return marketAccess || number_(firstValue_(shop, ['Access Level'])) || 4;
+}
+
+
+/* =========================================================
+   MARKET ELIGIBILITY
+   ========================================================= */
+
+function getEligibleShopIds_(
+  shops,
+  shopMarkets,
+  market,
+  maxAccess
+) {
+
+  const eligible = new Set();
+  const requestedMarket = upper_(market);
+
+  shops.forEach(function(shop) {
+    const shopId = normalize_(firstValue_(shop, ['Shop ID']));
+    if (!shopId) return;
+
+    if (!boolean_(firstValue_(shop, ['Active']))) return;
+
+    /* Resolve country first, then GLOBAL. The resolver is data-driven and
+       therefore applies to every active market in Markets without a country
+       allow-list in code. */
+    const marketConfig = getShopMarketConfig_(
+      shopMarkets,
+      shopId,
+      requestedMarket
+    );
+
+    if (!marketConfig) return;
+
+    const access =
+      number_(firstValue_(marketConfig, ['Access Level'])) ||
+      number_(firstValue_(shop, ['Access Level'])) ||
+      4;
+
+    if (access <= maxAccess) {
+      eligible.add(shopId);
+    }
+  });
+
+  return eligible;
+}
+
+
+/* =========================================================
+   PAYMENT SELECTION
+   ========================================================= */
+
+function paymentMethodCode_(method) {
+  const m = upper_(method).replace(/[\s_\-\/]+/g, ' ').trim();
+  if (m.indexOf('PAYPAL') !== -1) return 'PAYPAL';
+  if (m.indexOf('VISA') !== -1 || m.indexOf('MASTER') !== -1 || m === 'CARD') return 'CARD';
+  if (m.indexOf('APPLE') !== -1) return 'APPLEPAY';
+  if (m.indexOf('GOOGLE') !== -1) return 'GOOGLEPAY';
+  if (m.indexOf('IDEAL') !== -1 || m.indexOf('WERO') !== -1) return 'IDEAL_WERO';
+  if (m.indexOf('BLIK') !== -1) return 'BLIK';
+  if (m.indexOf('BANCONTACT') !== -1) return 'BANCONTACT';
+  if (m === 'EPS' || m.indexOf('EPS ') === 0) return 'EPS';
+  if (m.indexOf('KLARNA') !== -1) return 'KLARNA';
+  if (m.indexOf('TRUSTLY') !== -1) return 'TRUSTLY';
+  if (m.indexOf('SWISH') !== -1) return 'SWISH';
+  if (m.indexOf('VIPPS') !== -1) return 'VIPPS';
+  if (m.indexOf('MOBILEPAY') !== -1 || m.indexOf('MOBILE PAY') !== -1) return 'MOBILEPAY';
+  if (m.indexOf('MB WAY') !== -1) return 'MBWAY';
+  if (m.indexOf('MULTIBANCO') !== -1) return 'MULTIBANCO';
+  if (m.indexOf('BIZUM') !== -1) return 'BIZUM';
+  if (m.indexOf('PIX') !== -1) return 'PIX';
+  if (m.indexOf('FPX') !== -1) return 'FPX';
+  if (m.indexOf('PAYNOW') !== -1) return 'PAYNOW';
+  if (m.indexOf('PROMPTPAY') !== -1) return 'PROMPTPAY';
+  if (m.indexOf('ALIPAYHK') !== -1 || m.indexOf('ALIPAY HK') !== -1) return 'ALIPAYHK';
+  if (m.indexOf('PAYME') !== -1 || m.indexOf('PAY ME') !== -1) return 'PAYME';
+  if (m.indexOf('TWINT') !== -1) return 'TWINT';
+  if (m.indexOf('PAYPAY') !== -1) return 'PAYPAY';
+  if (m.indexOf('KONBINI') !== -1) return 'KONBINI';
+  if (m.indexOf('KAKAOPAY') !== -1 || m.indexOf('KAKAO PAY') !== -1) return 'KAKAOPAY';
+  if (m.indexOf('GCASH') !== -1) return 'GCASH';
+  if (m.indexOf('GRABPAY') !== -1 || m.indexOf('GRAB PAY') !== -1) return 'GRABPAY';
+  if (m.indexOf('DOKU') !== -1) return 'DOKU';
+  if (m.indexOf('OXXO') !== -1) return 'OXXO';
+  if (m.indexOf('CASH APP') !== -1) return 'CASHAPPPAY';
+  if (m.indexOf('LINE PAY') !== -1 || m.indexOf('LINEPAY') !== -1) return 'LINEPAY';
+  if (m.indexOf('SHOPEEPAY') !== -1 || m.indexOf('SHOPEE PAY') !== -1) return 'SHOPEEPAY';
+  if (m.indexOf('MYCARD') !== -1 || m.indexOf('MY CARD') !== -1) return 'MYCARD';
+  if (m.indexOf('QIWI') !== -1) return 'QIWI';
+  if (m.indexOf('BANK') !== -1 || m.indexOf('PAY BY BANK') !== -1) return 'BANK';
+  return m.replace(/[^A-Z0-9]+/g, '_');
+}
+
+function getPaymentOptionsForMarket(market, maxAccess) {
+  market = upper_(market || 'DE');
+  maxAccess = Math.min(4, Math.max(1, parseInt(maxAccess || 3, 10)));
+
+  const marketRows = getSheetObjects_(CONFIG.SHEETS.PAYMENT_MARKETS);
+  const payments = getSheetObjects_(CONFIG.SHEETS.PAYMENTS);
+  const shops = getSheetObjects_(CONFIG.SHEETS.SHOPS);
+  const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
+  const eligibleShopIds = getEligibleShopIds_(shops, shopMarkets, market, maxAccess);
+
+  let relevant = marketRows.filter(function(row) {
+    return upper_(firstValue_(row, ['Market Code'])) === market &&
+      boolean_(firstValue_(row, ['Available to User', 'Available', 'Active']));
+  });
+  if (!relevant.length) {
+    relevant = marketRows.filter(function(row) {
+      return upper_(firstValue_(row, ['Market Code'])) === 'GLOBAL' &&
+        boolean_(firstValue_(row, ['Available to User', 'Available', 'Active']));
+    });
+  }
+
+  const supportedByCode = {};
+  payments.forEach(function(row) {
+    const shopId = normalize_(firstValue_(row, ['Shop ID']));
+    if (!eligibleShopIds.has(shopId)) return;
+    const method = normalize_(firstValue_(row, ['Method']));
+    if (!method) return;
+    const code = paymentMethodCode_(method);
+    if (!supportedByCode[code]) supportedByCode[code] = [];
+    if (supportedByCode[code].indexOf(shopId) === -1) supportedByCode[code].push(shopId);
+  });
+
+  return relevant.map(function(row) {
+    const name = normalize_(firstValue_(row, ['Payment Method', 'Method']));
+    const code = paymentMethodCode_(name);
+    const shopsForMethod = supportedByCode[code] || [];
+    return {
+      code: code,
+      name: name,
+      preferenceTier: upper_(firstValue_(row, ['Preference Tier'])) || 'DEFAULT',
+      priority: number_(firstValue_(row, ['Priority'])) || 999,
+      category: upper_(firstValue_(row, ['Category'])),
+      availableInTrackedShops: shopsForMethod.length > 0,
+      shopCount: shopsForMethod.length
+    };
+  }).filter(function(item) {
+    /* The UI only shows methods that can actually be used at at least one
+       currently eligible tracked shop. Country relevance alone is not enough. */
+    return item.availableInTrackedShops;
+  }).sort(function(a, b) {
+    const tier = { HIGH: 0, MEDIUM: 1, LOW: 2, DEFAULT: 3 };
+    return (tier[a.preferenceTier] || 9) - (tier[b.preferenceTier] || 9) ||
+      a.priority - b.priority || a.name.localeCompare(b.name);
+  });
+}
+
+function selectPayment_(shopId, acceptedPayments, paymentRows) {
+  const normalizedAccepted = acceptedPayments.map(function(x) { return paymentMethodCode_(x); });
+  const shopPayments = paymentRows.filter(function(row) {
+    return normalize_(firstValue_(row, ['Shop ID'])) === shopId;
+  });
+  if (!shopPayments.length) return { compatible: false, method: '', status: 'PAYMENT_DATA_MISSING' };
+
+  const verified = [];
+  const unverified = [];
+  shopPayments.forEach(function(row) {
+    const method = normalize_(firstValue_(row, ['Method']));
+    if (normalizedAccepted.indexOf(paymentMethodCode_(method)) === -1) return;
+
+    const active = boolean_(firstValue_(row, ['Active']));
+    if (!active) {
+      unverified.push({ compatible: true, method: method, status: 'COST_UNVERIFIED', rate: 0, fixedEUR: 0,
+        priority: number_(firstValue_(row, ['Priority'])) || 999 });
+      return;
+    }
+
+    const rawRate = firstValue_(row, ['Fee %', 'Fee Rate', 'Percent Fee']);
+    const rawFixed = firstValue_(row, ['Fixed Fee EUR', 'Fixed EUR', 'Fixed Fee']);
+    const hasRate = rawRate !== '' && rawRate != null;
+    const hasFixed = rawFixed !== '' && rawFixed != null;
+    const rate = hasRate ? (number_(rawRate) || 0) : 0;
+    const fixedEUR = hasFixed ? (number_(rawFixed) || 0) : 0;
+    const priority = number_(firstValue_(row, ['Priority'])) || 999;
+
+    /* Active means the method is supported. It does NOT prove that a blank fee
+       is zero. At least one explicit fee field is required for cost routing. */
+    const costVerified = hasRate || hasFixed;
+    const result = { compatible: true, method: method,
+      status: costVerified ? 'COST_VERIFIED' : 'COST_UNVERIFIED', rate: rate,
+      fixedEUR: fixedEUR, priority: priority };
+    (costVerified ? verified : unverified).push(result);
+  });
+
+  verified.sort(function(a, b) {
+    return a.priority - b.priority || a.rate - b.rate || a.fixedEUR - b.fixedEUR;
+  });
+  if (verified.length) return verified[0];
+  if (unverified.length) return unverified[0];
+  return { compatible: false, method: '', status: 'NO_ACCEPTED_PAYMENT' };
+}
+
+function paymentMatches_(code, method) {
+  return paymentMethodCode_(code) === paymentMethodCode_(method);
+}
+
+
+/* =========================================================
+   ONE SHOP ROUTE
+   ========================================================= */
+
+function findOneShopRoute_(options) {
+  const shops = getSheetObjects_(CONFIG.SHEETS.SHOPS);
+  const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
+  const eligibleShopIds = Array.from(getEligibleShopIds_(shops, shopMarkets,
+    options.market, options.maxAccess));
+  const routes = [];
+
+  eligibleShopIds.forEach(function(shopId) {
+    const chosen = [];
+    let valid = true;
+    options.components.forEach(function(component) {
+      const candidate = getTierCandidates_({ tierId: component.tierId, quantity: component.quantity,
+        market: options.market, maxAccess: options.maxAccess,
+        paymentMethods: options.paymentMethods }).find(function(c) { return c.shopId === shopId; });
+      if (!candidate) { valid = false; return; }
+      chosen.push(Object.assign({}, candidate));
+    });
+    if (!valid) return;
+    const total = priceAssignedComponents_(chosen);
+    routes.push({ found: true, shopId: shopId, totalEUR: total, components: chosen });
+  });
+
+  routes.sort(function(a, b) { return a.totalEUR - b.totalEUR; });
+  return routes.length ? routes[0] : { found: false };
+}
+
+/* =========================================================
+   GROUP ROUTES BY SHOP
+   ========================================================= */
+
+function groupRoutesByShop_(components) {
+
+  const grouped = {};
+
+
+  components.forEach(function(item) {
+
+    if (!item.found) return;
+
+
+    if (!grouped[item.shopId]) {
+
+      grouped[item.shopId] = {
+        shopId: item.shopId,
+        shopName: item.shopName,
+        purchaseUrl: item.purchaseUrl,
+        payment: item.payment,
+        paymentStatus: item.paymentStatus,
+        accessLevel: item.accessLevel,
+        coupon: item.coupon,
+        subtotalEUR: 0,
+        components: []
+      };
+    }
+
+
+    grouped[item.shopId]
+      .components
+      .push({
+        tierId: item.tierId,
+        quantity: item.quantity,
+        unitPriceEUR: item.unitPriceEUR,
+        subtotalEUR: item.subtotalEUR
+      });
+
+
+    grouped[item.shopId]
+      .subtotalEUR += item.subtotalEUR;
+  });
+
+
+  return Object.keys(grouped)
+    .map(function(key) {
+      return grouped[key];
+    })
+    .sort(function(a, b) {
+      return a.subtotalEUR - b.subtotalEUR;
+    });
+}

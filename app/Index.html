@@ -1,0 +1,761 @@
+
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+  <base target="_top">
+
+  <meta charset="UTF-8">
+
+  <?!= include('Styles'); ?>
+
+</head>
+
+
+<body>
+
+
+<div class="app">
+
+
+  <!-- ======================================================
+       HEADER
+       ====================================================== -->
+
+  <header class="header">
+
+    <div>
+
+      <div class="brand">
+        🏹 ROK DEAL HUNTER
+      </div>
+
+      <div class="tagline" data-i18n="APP_TAGLINE">
+        Stop feeding Lilith more than necessary.
+      </div>
+
+    </div>
+
+
+    <button
+      class="settings-button"
+      type="button"
+      onclick="openSettings()"
+      title="Player Settings"
+    >
+      ⚙️
+    </button>
+
+  </header>
+
+
+
+  <!-- ======================================================
+       MAIN
+       ====================================================== -->
+
+  <main class="container">
+
+
+    <!-- HERO -->
+
+    <section class="hero">
+
+      <div class="eyebrow" data-i18n="HERO_EYEBROW">
+        KINGDOM SHOPPING INTELLIGENCE
+      </div>
+
+
+      <h1 data-i18n="HERO_TITLE">
+        Hunt the deal. Keep the difference.
+      </h1>
+
+
+      <p>
+        Compare eligible RoK shops, package routes,
+        payment methods and account-access requirements.
+      </p>
+
+    </section>
+
+
+
+    <!-- ====================================================
+         DEAL HUNTER
+         ==================================================== -->
+
+    <section class="hunter-card">
+
+
+      <div class="section-title">
+        🏹 DEAL HUNTER
+      </div>
+
+
+      <label for="packageSelect" data-i18n="WHAT_LOOKING_FOR">
+        What are you looking for?
+      </label>
+
+
+      <select
+        id="packageSelect"
+        disabled
+      >
+
+        <option value="" data-i18n="CHOOSE_PACKAGE">
+          Choose a package...
+        </option>
+
+      </select>
+
+
+
+      <div class="quantity-row">
+
+
+        <span class="quantity-label" data-i18n="QUANTITY">
+          Quantity
+        </span>
+
+
+        <div class="quantity-control">
+
+          <button
+            type="button"
+            onclick="changeQuantity(-1)"
+            aria-label="Decrease quantity"
+          >
+            −
+          </button>
+
+
+          <span id="quantity">
+            1
+          </span>
+
+
+          <button
+            type="button"
+            onclick="changeQuantity(1)"
+            aria-label="Increase quantity"
+          >
+            +
+          </button>
+
+        </div>
+
+      </div>
+
+
+
+      <button
+        id="huntButton"
+        class="hunt-button"
+        type="button"
+        onclick="huntDeal()"
+        disabled
+      >
+        <span data-i18n="HUNT_DEAL">🏹 HUNT THE DEAL</span>
+      </button>
+
+
+      <div
+        id="hunterStatus"
+        class="hunter-status"
+      >
+        Connecting to the RoK Deal Hunter backend...
+      </div>
+
+
+    </section>
+
+
+
+    <!-- ====================================================
+         LOADING RESULT
+         ==================================================== -->
+
+    <section
+      id="dealLoading"
+      class="loading-card hidden"
+    >
+
+      <div class="loading-spinner">
+        🏹
+      </div>
+
+      <strong>
+        Hunting the cheapest eligible route...
+      </strong>
+
+      <span>
+        Checking shops, access rules and payment methods.
+      </span>
+
+    </section>
+
+
+
+    <!-- ====================================================
+         COMPLETE / PARTIAL RESULT
+         ==================================================== -->
+
+    <section
+      id="result"
+      class="result-card hidden"
+    >
+
+
+      <!-- RESULT HEADER -->
+
+      <div class="result-top">
+
+
+        <div>
+
+          <div
+            id="resultStatus"
+            class="result-status"
+          >
+            <span data-i18n="DEAL_FOUND">🎯 DEAL FOUND</span>
+          </div>
+
+
+          <h2 id="resultPackageName">
+            —
+          </h2>
+
+
+          <div
+            id="resultMeta"
+            class="result-meta"
+          >
+            —
+          </div>
+
+        </div>
+
+
+        <div
+          id="resultBadge"
+          class="result-badge"
+        >
+          COMPLETE
+        </div>
+
+
+      </div>
+
+
+
+      <!-- PRICE SUMMARY -->
+
+      <div class="price-summary">
+
+
+        <div class="price-line">
+
+          <span data-i18n="OFFICIAL_PRICE">
+            Official price
+          </span>
+
+          <strong id="officialPrice">
+            —
+          </strong>
+
+        </div>
+
+
+        <div class="price-line best">
+
+          <span data-i18n="BEST_ROUTE">
+            Best route
+          </span>
+
+          <strong id="bestPrice">
+            —
+          </strong>
+
+        </div>
+
+
+        <div class="price-line saving">
+
+          <span data-i18n="YOU_SAVE">
+            You save
+          </span>
+
+          <strong id="saving">
+            —
+          </strong>
+
+        </div>
+
+
+      </div>
+
+
+
+      <!-- LILITH DENIED -->
+
+      <div
+        id="deniedBox"
+        class="denied"
+      >
+
+
+        <div class="denied-title" data-i18n="LILITH_DENIED">
+          💰 LILITH DENIED
+        </div>
+
+
+        <div
+          id="deniedPercent"
+          class="denied-value"
+        >
+          —
+        </div>
+
+
+        <div
+          id="deniedMoney"
+          class="denied-money"
+        >
+          —
+        </div>
+
+
+      </div>
+
+
+
+      <!-- INCOMPLETE WARNING -->
+
+      <div
+        id="incompleteWarning"
+        class="warning-box hidden"
+      >
+
+        <strong>
+          ⚠️ Route incomplete
+        </strong>
+
+        <span id="incompleteText">
+          Some package components currently have no eligible verified deal.
+        </span>
+
+      </div>
+
+
+
+      <!-- SHOPPING ROUTE -->
+
+      <div
+        id="shoppingRouteSection"
+        class="shopping-route-section"
+      >
+
+
+        <div class="shopping-route-heading">
+
+          <div>
+
+            <div class="section-title" data-i18n="SHOPPING_ROUTE">
+              🛒 YOUR SHOPPING ROUTE
+            </div>
+
+            <p>
+              Buy the listed components from these shops.
+            </p>
+
+          </div>
+
+
+          <div
+            id="shopCount"
+            class="shop-count"
+          >
+            —
+          </div>
+
+
+        </div>
+
+
+
+        <!--
+          JavaScript creates the individual shop cards here.
+        -->
+
+        <div id="shopRoutes"></div>
+
+
+      </div>
+
+
+
+      <!-- MISSING COMPONENTS -->
+
+      <div
+        id="missingComponentsSection"
+        class="missing-section hidden"
+      >
+
+
+        <div class="section-title" data-i18n="STILL_MISSING">
+          🔎 STILL MISSING
+        </div>
+
+
+        <div id="missingComponents"></div>
+
+
+      </div>
+
+
+
+      <!-- DATA NOTICE -->
+
+      <div class="data-notice">
+
+        <span>
+          🛡️
+        </span>
+
+        <div>
+
+          <strong>
+            Deal Hunter safety rule
+          </strong>
+
+          <p>
+            Only routes currently eligible for the selected market
+            and account-access level are considered. Unknown or
+            unverified routes are excluded from the winner.
+          </p>
+
+        </div>
+
+      </div>
+
+
+    </section>
+
+
+
+    <!-- ====================================================
+         NO DEAL
+         ==================================================== -->
+
+    <section
+      id="noDeal"
+      class="no-deal-card hidden"
+    >
+
+
+      <div class="no-deal-icon">
+        🏹
+      </div>
+
+
+      <h2 data-i18n="NO_DEAL_FOUND">
+        No eligible deal found.
+      </h2>
+
+
+      <p id="noDealText">
+        We currently do not have a verified route matching
+        your market, payment methods and account-access limit.
+      </p>
+
+
+      <button
+        class="secondary-button"
+        type="button"
+        onclick="openSettings()"
+      >
+        ⚙️ CHECK PLAYER SETTINGS
+      </button>
+
+
+    </section>
+
+
+
+    <!-- ====================================================
+         FOOTER
+         ==================================================== -->
+
+    <div class="footer">
+
+      <strong>
+        RoK Deal Hunter
+      </strong>
+
+      <span>
+        Built for governors who prefer troops
+        over unnecessary checkout fees.
+      </span>
+
+    </div>
+
+
+  </main>
+
+</div>
+
+
+
+<!-- ========================================================
+     PLAYER SETTINGS MODAL
+     ======================================================== -->
+
+<div
+  id="settingsModal"
+  class="modal hidden"
+>
+
+
+  <div class="modal-card">
+
+
+    <!-- MODAL HEADER -->
+
+    <div class="modal-header">
+
+
+      <div>
+
+        <div class="section-title" data-i18n="PLAYER_SETTINGS">
+          PLAYER SETTINGS
+        </div>
+
+        <h2>
+          ⚙️ Deal Settings
+        </h2>
+
+      </div>
+
+
+      <button
+        class="modal-close"
+        type="button"
+        onclick="closeSettings()"
+        aria-label="Close settings"
+      >
+        ✕
+      </button>
+
+
+    </div>
+
+
+
+    <p class="settings-intro">
+      These settings control which deals the Hunter is
+      allowed to consider. They are stored locally in your browser.
+    </p>
+
+
+
+    <!-- LANGUAGE -->
+
+    <label for="language">
+      🌐 <span data-i18n="LANGUAGE">Language</span>
+    </label>
+
+
+    <select
+      id="language"
+      disabled
+    >
+
+      <option value="">
+        Loading languages...
+      </option>
+
+    </select>
+
+
+
+    <!-- MARKET -->
+
+    <label for="market">
+      🌍 <span data-i18n="YOUR_MARKET">Your Market</span>
+    </label>
+
+
+    <select
+      id="market"
+      disabled
+    >
+
+      <option value="">
+        Loading markets...
+      </option>
+
+    </select>
+
+
+    <div class="field-hint">
+      Your market determines which shop routes may be used.
+    </div>
+
+
+
+    <!-- CURRENCY -->
+
+    <label for="currency">
+      💱 <span data-i18n="DISPLAY_CURRENCY">Display Currency</span>
+    </label>
+
+
+    <select
+      id="currency"
+      disabled
+    >
+
+      <option value="">
+        Loading currencies...
+      </option>
+
+    </select>
+
+
+    <div class="field-hint">
+      The current Deal Engine calculates verified comparisons in EUR.
+      Other display currencies will be connected to FX conversion later.
+    </div>
+
+
+
+    <!-- PAYMENT METHODS -->
+
+    <fieldset class="settings-group">
+
+
+      <legend>
+        💳 <span data-i18n="PAYMENT_METHODS">Accepted Payment Methods</span>
+      </legend>
+
+
+      <div
+        id="paymentMethods"
+        class="checkbox-grid"
+      >
+
+        <span class="field-hint">
+          Loading payment methods...
+        </span>
+
+      </div>
+
+
+    </fieldset>
+
+
+
+    <!-- ACCESS -->
+
+    <label for="access">
+      🔐 <span data-i18n="MAX_ACCESS">Maximum Account Access</span>
+    </label>
+
+
+    <select
+      id="access"
+      disabled
+    >
+
+      <option value="">
+        Loading access levels...
+      </option>
+
+    </select>
+
+
+    <div class="field-hint">
+      Lower access levels are automatically allowed.
+    </div>
+
+
+
+    <!-- DEAL MODE -->
+
+    <label for="dealMode">
+      🎯 <span data-i18n="DEAL_MODE">Deal Mode</span>
+    </label>
+
+
+    <select
+      id="dealMode"
+      disabled
+    >
+
+      <option value="">
+        Loading deal modes...
+      </option>
+
+    </select>
+
+
+    <div class="field-hint">
+      Cheapest may split the purchase across several shops.
+      One shop only tries to keep the entire route together.
+    </div>
+
+
+
+    <!-- REMEMBER -->
+
+    <label class="remember-row">
+
+      <input
+        id="rememberSettings"
+        type="checkbox"
+        checked
+      >
+
+      <span data-i18n="REMEMBER_SETTINGS">
+        Remember these settings on this device
+      </span>
+
+    </label>
+
+
+
+    <!-- SAVE -->
+
+    <button
+      class="save-settings"
+      type="button"
+      onclick="saveSettings()"
+    >
+      <span data-i18n="SAVE_SETTINGS">SAVE SETTINGS</span>
+    </button>
+
+
+    <div class="privacy-note">
+      🔐 RoK Deal Hunter never stores your game password,
+      shop password or payment credentials.
+    </div>
+
+
+  </div>
+
+</div>
+
+
+
+<!-- ========================================================
+     JAVASCRIPT
+     ======================================================== -->
+
+<?!= include('JavaScript'); ?>
+
+
+</body>
+
+</html>
