@@ -179,7 +179,7 @@ function applyLanguage() {
 
   const huntButton = document.getElementById('huntButton');
   if (huntButton && !huntButton.disabled) {
-    huntButton.textContent = '🏹 ' + t('HUNT_DEAL');
+    huntButton.textContent = t('HUNT_DEAL');
   }
 
   if (lastDealResult) {
@@ -736,7 +736,7 @@ function refreshShopsForMarket_(options) {
 
       schedulePaymentRefresh_({
         preserveSelection: options.preserveSelection !== false,
-        selectAll: options.selectAll === true
+        selectRecommended: options.preserveSelection === false
       });
     })
     .withFailureHandler(function(error) {
@@ -758,6 +758,8 @@ function refreshShopsForMarket_(options) {
     .getShopOptionsForMarket(market, maxAccess);
 }
 
+
+let newCustomerShopIds_ = new Set();
 
 let paymentOptionsCache_ = {
   key: '',
@@ -790,17 +792,12 @@ function populatePaymentMethods(methods, options) {
 
   options = options || {};
 
-  const container =
-    document.getElementById('paymentMethods');
-
+  const container = document.getElementById('paymentMethods');
   if (!container) return;
 
   const previousSelection = options.selectedValues ||
-    Array.from(
-      document.querySelectorAll('input[name="paymentMethod"]:checked')
-    ).map(function(input) {
-      return input.value;
-    });
+    Array.from(document.querySelectorAll('input[name="paymentMethod"]:checked'))
+      .map(function(input) { return input.value; });
 
   const wanted = previousSelection.map(function(value) {
     return String(value).toUpperCase();
@@ -819,14 +816,12 @@ function populatePaymentMethods(methods, options) {
     return;
   }
 
-  methods.forEach(function(method) {
-
+  function buildOption(method) {
     const label = document.createElement('label');
     label.className = 'payment-option';
 
-    if (String(method.preferenceTier || '').toUpperCase() === 'HIGH') {
-      label.classList.add('recommended');
-    }
+    const recommended = String(method.preferenceTier || '').toUpperCase() === 'HIGH';
+    if (recommended) label.classList.add('recommended');
 
     const input = document.createElement('input');
     input.type = 'checkbox';
@@ -837,19 +832,70 @@ function populatePaymentMethods(methods, options) {
     const text = document.createElement('span');
     text.textContent = method.name;
 
-    if (String(method.preferenceTier || '').toUpperCase() === 'HIGH') {
-      const recommended = document.createElement('small');
-      recommended.className = 'payment-recommended-label';
-      recommended.textContent = ' ★ ' + translatedOr_('RECOMMENDED', 'Recommended');
-      text.appendChild(recommended);
+    if (recommended) {
+      const badge = document.createElement('small');
+      badge.className = 'payment-recommended-label';
+      badge.textContent = ' ★ ' + translatedOr_('RECOMMENDED', 'Recommended');
+      text.appendChild(badge);
     }
 
     label.appendChild(input);
     label.appendChild(text);
-    container.appendChild(label);
-  });
-}
+    return label;
+  }
 
+  const recommended = methods.filter(function(method) {
+    return String(method.preferenceTier || '').toUpperCase() === 'HIGH';
+  });
+  const additional = methods.filter(function(method) {
+    return String(method.preferenceTier || '').toUpperCase() !== 'HIGH';
+  });
+
+  const primary = recommended.length ? recommended : methods.slice(0, Math.min(3, methods.length));
+  const primaryCodes = primary.map(function(method) { return method.code; });
+
+  primary.forEach(function(method) {
+    container.appendChild(buildOption(method));
+  });
+
+  const hiddenMethods = additional.filter(function(method) {
+    return primaryCodes.indexOf(method.code) === -1;
+  });
+
+  if (hiddenMethods.length) {
+    const details = document.createElement('details');
+    details.className = 'payment-more';
+
+    const summary = document.createElement('summary');
+    summary.className = 'payment-more-summary';
+
+    function updateSummary() {
+      const selectedHidden = hiddenMethods.filter(function(method) {
+        const input = details.querySelector('input[value="' + method.code + '"]');
+        return input && input.checked;
+      }).length;
+      summary.textContent = '+ ' +
+        translatedOr_('MORE_PAYMENT_METHODS', 'Show more payment methods') +
+        (selectedHidden ? ' (' + selectedHidden + ' ' +
+          translatedOr_('SELECTED', 'selected') + ')' : '');
+    }
+
+    const body = document.createElement('div');
+    body.className = 'payment-more-body';
+
+    hiddenMethods.forEach(function(method) {
+      const option = buildOption(method);
+      const input = option.querySelector('input');
+      input.addEventListener('change', updateSummary);
+      body.appendChild(option);
+    });
+
+    details.appendChild(summary);
+    details.appendChild(body);
+    container.appendChild(details);
+    updateSummary();
+  }
+}
 
 let paymentMarketRequestToken_ = 0;
 
@@ -902,9 +948,19 @@ function refreshPaymentMethodsForMarket_(options) {
       });
     });
 
-    if (options.selectAll === true ||
-        (!selection.length && options.preserveSelection === false)) {
+    if (options.selectAll === true) {
       selection = returned.map(function(method) {
+        return method.code;
+      });
+    } else if (options.selectRecommended === true ||
+        (!selection.length && options.preserveSelection === false)) {
+      const recommended = returned.filter(function(method) {
+        return String(method.preferenceTier || '').toUpperCase() === 'HIGH';
+      });
+      const defaults = recommended.length
+        ? recommended
+        : returned.slice(0, Math.min(3, returned.length));
+      selection = defaults.map(function(method) {
         return method.code;
       });
     }
@@ -1038,7 +1094,7 @@ function enableControls() {
   huntButton.disabled = false;
 
   huntButton.textContent =
-    '🏹 HUNT THE DEAL';
+    'HUNT THE DEAL';
 }
 
 
@@ -1329,7 +1385,7 @@ function applyDefaultSettings() {
 
   schedulePaymentRefresh_({
     preserveSelection: false,
-    selectAll: true
+    selectRecommended: true
   });
 
 
@@ -1386,7 +1442,7 @@ function applySettings(settings) {
   schedulePaymentRefresh_({
     preserveSelection: false,
     selectedValues: savedPaymentMethods,
-    selectAll: !savedPaymentMethods.length
+    selectRecommended: !savedPaymentMethods.length
   });
 
 
@@ -1552,7 +1608,10 @@ function huntDeal() {
       settings.dealMode,
 
     resultCount:
-      settings.resultCount
+      settings.resultCount,
+
+    newCustomerShopIds:
+      Array.from(newCustomerShopIds_)
 
   };
 
@@ -1629,7 +1688,7 @@ function setHuntLoading(isLoading) {
     button.disabled = false;
 
     button.textContent =
-      '🏹 HUNT THE DEAL';
+      'HUNT THE DEAL';
 
     loading.classList.add(
       'hidden'
@@ -2010,13 +2069,84 @@ function createShopCard(route) {
     );
 
 
-  header.appendChild(
-    shopInfo
+  header.appendChild(shopInfo);
+
+  const priceWrap = document.createElement('div');
+  priceWrap.className = 'shop-price-wrap';
+  priceWrap.appendChild(subtotal);
+
+  const priceInfo = document.createElement('details');
+  priceInfo.className = 'deal-price-info';
+
+  const priceInfoButton = document.createElement('summary');
+  priceInfoButton.className = 'deal-price-info-button';
+  priceInfoButton.textContent = 'i';
+  priceInfoButton.setAttribute('aria-label',
+    translatedOr_('PRICE_BREAKDOWN', 'Price breakdown'));
+
+  const priceInfoPopover = document.createElement('div');
+  priceInfoPopover.className = 'deal-price-info-popover';
+
+  function addBreakdownLine(label, value, cls) {
+    const line = document.createElement('div');
+    line.className = 'deal-breakdown-line' + (cls ? ' ' + cls : '');
+    const left = document.createElement('span');
+    left.textContent = label;
+    const right = document.createElement('strong');
+    right.textContent = value;
+    line.appendChild(left);
+    line.appendChild(right);
+    priceInfoPopover.appendChild(line);
+  }
+
+  if (Number.isFinite(Number(route.baseMerchandiseEUR))) {
+    addBreakdownLine(
+      translatedOr_('BASE_PRICE', 'Shop price'),
+      formatDisplayMoney(Number(route.baseMerchandiseEUR))
+    );
+  }
+
+  if (route.newCustomerCouponAvailable) {
+    addBreakdownLine(
+      translatedOr_('NEW_CUSTOMER_DISCOUNT', 'New-customer discount'),
+      route.couponApplied
+        ? '−' + formatDisplayMoney(Number(route.couponDiscountEUR || 0))
+        : translatedOr_('NOT_APPLIED', 'not applied'),
+      route.couponApplied ? 'discount' : 'muted'
+    );
+  } else if (route.couponApplied && Number(route.couponDiscountEUR) > 0) {
+    addBreakdownLine(
+      translatedOr_('COUPON_DISCOUNT', 'Coupon discount'),
+      '−' + formatDisplayMoney(Number(route.couponDiscountEUR)),
+      'discount'
+    );
+  }
+
+  if (Number.isFinite(Number(route.merchandiseSubtotalEUR))) {
+    addBreakdownLine(
+      translatedOr_('MERCHANDISE_SUBTOTAL', 'Items'),
+      formatDisplayMoney(Number(route.merchandiseSubtotalEUR))
+    );
+  }
+
+  if (Number.isFinite(Number(route.paymentFeeEUR))) {
+    addBreakdownLine(
+      translatedOr_('PAYMENT_FEE', 'Payment fee'),
+      (Number(route.paymentFeeEUR) >= 0 ? '+' : '−') +
+        formatDisplayMoney(Math.abs(Number(route.paymentFeeEUR)))
+    );
+  }
+
+  addBreakdownLine(
+    translatedOr_('TOTAL', 'Total'),
+    formatDisplayMoney(Number(route.subtotalEUR)),
+    'total'
   );
 
-  header.appendChild(
-    subtotal
-  );
+  priceInfo.appendChild(priceInfoButton);
+  priceInfo.appendChild(priceInfoPopover);
+  priceWrap.appendChild(priceInfo);
+  header.appendChild(priceWrap);
 
 
   card.appendChild(
@@ -2024,32 +2154,7 @@ function createShopCard(route) {
   );
 
 
-  /* CHECKOUT BREAKDOWN */
-
-  const merchandiseEUR = Number(route.merchandiseSubtotalEUR);
-  const paymentFeeEUR = Number(route.paymentFeeEUR);
-
-  if (Number.isFinite(merchandiseEUR) || Number.isFinite(paymentFeeEUR)) {
-    const breakdown = document.createElement('div');
-    breakdown.className = 'route-checkout-breakdown';
-
-    if (Number.isFinite(merchandiseEUR)) {
-      const merchandise = document.createElement('span');
-      merchandise.textContent = translatedOr_('MERCHANDISE_SUBTOTAL', 'Items') + ': ' +
-        formatDisplayMoney(merchandiseEUR);
-      breakdown.appendChild(merchandise);
-    }
-
-    if (Number.isFinite(paymentFeeEUR) && paymentFeeEUR > 0) {
-      const fee = document.createElement('span');
-      fee.textContent = translatedOr_('PAYMENT_FEE', 'Payment fee') + ': +' +
-        formatDisplayMoney(paymentFeeEUR);
-      breakdown.appendChild(fee);
-    }
-
-    card.appendChild(breakdown);
-  }
-
+  /* Checkout breakdown is intentionally shown only in the price (i) popover. */
 
   /* COMPONENT LIST */
 
@@ -2137,46 +2242,49 @@ function createShopCard(route) {
   card.appendChild(status);
 
 
-  /* COUPON */
+  /* COUPON / NEW CUSTOMER */
 
-  if (route.coupon) {
+  if (route.newCustomerCouponAvailable && route.coupon) {
+    const eligibility = document.createElement('label');
+    eligibility.className = 'new-customer-toggle';
 
-    const coupon =
-      document.createElement('div');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = newCustomerShopIds_.has(route.shopId);
 
-    coupon.className =
-      'coupon-box';
+    const copy = document.createElement('span');
+    copy.innerHTML =
+      '<strong>' + translatedOr_('NEW_CUSTOMER_AT_SHOP', 'I am a new customer at this shop') + '</strong>' +
+      '<small>🎟️ ' + route.coupon + ' · ' +
+      translatedOr_('APPLY_NEW_CUSTOMER_DISCOUNT', 'apply new-customer discount') + '</small>';
 
+    checkbox.addEventListener('change', function() {
+      if (checkbox.checked) {
+        newCustomerShopIds_.add(route.shopId);
+      } else {
+        newCustomerShopIds_.delete(route.shopId);
+      }
+      huntDeal();
+    });
 
-    const couponLabel =
-      document.createElement('span');
+    eligibility.appendChild(checkbox);
+    eligibility.appendChild(copy);
+    card.appendChild(eligibility);
 
-    couponLabel.textContent =
-      '🎟️ ' + translatedOr_('COUPON', 'Coupon');
+  } else if (route.coupon && route.couponApplied) {
+    const coupon = document.createElement('div');
+    coupon.className = 'coupon-box';
 
+    const couponLabel = document.createElement('span');
+    couponLabel.textContent = '🎟️ ' + translatedOr_('COUPON', 'Coupon');
 
-    const couponCode =
-      document.createElement('strong');
+    const couponCode = document.createElement('strong');
+    couponCode.textContent = route.coupon;
 
-    couponCode.textContent =
-      route.coupon;
-
-
-    coupon.appendChild(
-      couponLabel
-    );
-
-    coupon.appendChild(
-      couponCode
-    );
-
-
-    card.appendChild(
-      coupon
-    );
-
+    coupon.appendChild(couponLabel);
+    coupon.appendChild(couponCode);
+    card.appendChild(coupon);
   }
-
 
   /* SHOP BUTTON */
 

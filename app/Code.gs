@@ -481,6 +481,9 @@ function findBestDeal(request) {
     : [];
   const dealMode = upper_(request.dealMode || 'CHEAPEST');
   const resultCount = Math.min(4, Math.max(1, parseInt(request.resultCount || 1, 10)));
+  const newCustomerShopIds = Array.isArray(request.newCustomerShopIds)
+    ? request.newCustomerShopIds.map(normalize_).filter(Boolean)
+    : [];
 
   if (!packageId) throw new Error('No package selected.');
 
@@ -531,6 +534,7 @@ function findBestDeal(request) {
     rankedShopResults = findTopShopRoutes_({
       components: requiredComponents, market: market, maxAccess: maxAccess,
       paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops,
+      newCustomerShopIds: newCustomerShopIds,
       limit: resultCount,
       directPackageId: mappingMode === 'COMPOSITE' ? packageId : '',
       directQuantity: quantity
@@ -542,12 +546,14 @@ function findBestDeal(request) {
     if (dealMode === 'ONE_SHOP') {
       routeResult = findOneShopRoute_({
         components: requiredComponents, market: market, maxAccess: maxAccess,
-        paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops
+        paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops,
+        newCustomerShopIds: newCustomerShopIds
       });
     } else {
       routeResult = findCheapestCartRoute_({
         components: requiredComponents, market: market, maxAccess: maxAccess,
-        paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops
+        paymentMethods: acceptedPayments, shopMode: shopMode, shopIds: acceptedShops,
+        newCustomerShopIds: newCustomerShopIds
       });
     }
 
@@ -557,7 +563,8 @@ function findBestDeal(request) {
       const direct = findCheapestCartRoute_({
         components: [{ tierId: packageId, quantity: quantity }],
         market: market, maxAccess: maxAccess, paymentMethods: acceptedPayments,
-        shopMode: shopMode, shopIds: acceptedShops
+        shopMode: shopMode, shopIds: acceptedShops,
+        newCustomerShopIds: newCustomerShopIds
       });
       if (direct.found && (!routeResult.found || direct.totalEUR < routeResult.totalEUR)) {
         routeResult = direct;
@@ -764,6 +771,10 @@ function getTierCandidates_(options) {
   const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
   const payments = getSheetObjects_(CONFIG.SHEETS.PAYMENTS);
   const markets = getSheetObjects_(CONFIG.SHEETS.MARKETS);
+  const coupons = getSheetObjects_(CONFIG.SHEETS.COUPONS);
+  const newCustomerShopIds = Array.isArray(options.newCustomerShopIds)
+    ? options.newCustomerShopIds.map(normalize_)
+    : [];
   const eligibleShopIds = filterEligibleShopIdsBySelection_(
     getEligibleShopIds_(shops, shopMarkets, options.market, options.maxAccess),
     options.shopMode,
@@ -789,10 +800,32 @@ function getTierCandidates_(options) {
       /* Final EUR is the merchandise price after the stored coupon. Payment
          cost is deliberately NOT taken from Checkout Effective EUR here,
          because fixed checkout fees belong to the cart, not every item. */
-      let unitBaseEUR = number_(firstValue_(priceRow, ['Final EUR']));
-      if (unitBaseEUR == null) unitBaseEUR = number_(firstValue_(priceRow, ['Price EUR']));
-      if (unitBaseEUR == null) return;
+      const priceEUR = number_(firstValue_(priceRow, ['Price EUR']));
+      const couponCode = normalize_(firstValue_(priceRow, ['Coupon']));
+      const couponRow = couponCode ? coupons.find(function(row) {
+        return normalize_(firstValue_(row, ['Shop ID'])) === shopId &&
+          normalize_(firstValue_(row, ['Code'])) === couponCode;
+      }) : null;
+      const newCustomerOnly = couponRow
+        ? boolean_(firstValue_(couponRow, ['New Customer Only']))
+        : false;
+      const newCustomerSelected = newCustomerShopIds.indexOf(shopId) !== -1;
+      const couponApplied = !!couponCode && (!newCustomerOnly || newCustomerSelected);
 
+      if (priceEUR == null) return;
+
+      let unitCouponDiscountEUR = 0;
+      if (couponApplied) {
+        const storedDiscount = number_(firstValue_(priceRow, ['Coupon Discount EUR']));
+        if (storedDiscount != null) {
+          unitCouponDiscountEUR = Math.max(0, storedDiscount);
+        } else if (couponRow && upper_(firstValue_(couponRow, ['Type'])) === 'PERCENT') {
+          const couponRate = number_(firstValue_(couponRow, ['Value'])) || 0;
+          unitCouponDiscountEUR = Math.max(0, priceEUR * couponRate);
+        }
+      }
+
+      const unitBaseEUR = Math.max(0, priceEUR - unitCouponDiscountEUR);
       const merchandiseSubtotalEUR = unitBaseEUR * options.quantity;
       const payment = selectCheapestPaymentForSubtotal_(paymentOptions, merchandiseSubtotalEUR);
       if (!payment) return;
@@ -805,7 +838,12 @@ function getTierCandidates_(options) {
         payment: payment.method, paymentStatus: payment.status,
         paymentRate: payment.rate || 0, paymentFixedEUR: payment.fixedEUR || 0,
         paymentOptions: paymentOptions,
-        coupon: normalize_(firstValue_(priceRow, ['Coupon'])),
+        coupon: couponCode,
+        couponApplied: couponApplied,
+        newCustomerCouponAvailable: !!couponCode && newCustomerOnly,
+        newCustomerSelected: newCustomerSelected,
+        basePriceEUR: priceEUR,
+        couponDiscountEUR: unitCouponDiscountEUR * options.quantity,
         unitBaseEUR: unitBaseEUR, unitPriceEUR: unitBaseEUR,
         merchandiseSubtotalEUR: merchandiseSubtotalEUR,
         subtotalEUR: merchandiseSubtotalEUR,
@@ -869,7 +907,8 @@ function findCheapestCartRoute_(options) {
   const candidateSets = options.components.map(function(component) {
     return getTierCandidates_({ tierId: component.tierId, quantity: component.quantity,
       market: options.market, maxAccess: options.maxAccess, paymentMethods: options.paymentMethods,
-      shopMode: options.shopMode, shopIds: options.shopIds });
+      shopMode: options.shopMode, shopIds: options.shopIds,
+      newCustomerShopIds: options.newCustomerShopIds });
   });
 
   const missing = [];
@@ -922,7 +961,8 @@ function findTopShopRoutes_(options) {
         tierId: component.tierId, quantity: component.quantity,
         market: options.market, maxAccess: options.maxAccess,
         paymentMethods: options.paymentMethods,
-        shopMode: 'SELECTED', shopIds: [shopId]
+        shopMode: 'SELECTED', shopIds: [shopId],
+        newCustomerShopIds: options.newCustomerShopIds
       }).find(function(c) { return c.shopId === shopId; });
       if (!candidate) { valid = false; return; }
       chosen.push(Object.assign({}, candidate));
@@ -941,7 +981,8 @@ function findTopShopRoutes_(options) {
         quantity: options.directQuantity || 1,
         market: options.market, maxAccess: options.maxAccess,
         paymentMethods: options.paymentMethods,
-        shopMode: 'SELECTED', shopIds: [shopId]
+        shopMode: 'SELECTED', shopIds: [shopId],
+        newCustomerShopIds: options.newCustomerShopIds
       }).find(function(c) { return c.shopId === shopId; });
 
       if (directCandidate) {
@@ -1240,7 +1281,8 @@ function findOneShopRoute_(options) {
       const candidate = getTierCandidates_({ tierId: component.tierId, quantity: component.quantity,
         market: options.market, maxAccess: options.maxAccess,
         paymentMethods: options.paymentMethods,
-        shopMode: 'SELECTED', shopIds: [shopId] }).find(function(c) { return c.shopId === shopId; });
+        shopMode: 'SELECTED', shopIds: [shopId],
+        newCustomerShopIds: options.newCustomerShopIds }).find(function(c) { return c.shopId === shopId; });
       if (!candidate) { valid = false; return; }
       chosen.push(Object.assign({}, candidate));
     });
@@ -1277,6 +1319,13 @@ function groupRoutesByShop_(components) {
         paymentStatus: item.paymentStatus,
         accessLevel: item.accessLevel,
         coupon: item.coupon,
+        couponApplied: item.couponApplied,
+        newCustomerCouponAvailable: item.newCustomerCouponAvailable,
+        newCustomerSelected: item.newCustomerSelected,
+        baseMerchandiseEUR: 0,
+        couponDiscountEUR: 0,
+        merchandiseSubtotalEUR: 0,
+        paymentFeeEUR: 0,
         subtotalEUR: 0,
         components: []
       };
@@ -1293,8 +1342,12 @@ function groupRoutesByShop_(components) {
       });
 
 
-    grouped[item.shopId]
-      .subtotalEUR += item.subtotalEUR;
+    grouped[item.shopId].baseMerchandiseEUR +=
+      (item.basePriceEUR != null ? item.basePriceEUR * item.quantity : item.merchandiseSubtotalEUR);
+    grouped[item.shopId].couponDiscountEUR += item.couponDiscountEUR || 0;
+    grouped[item.shopId].merchandiseSubtotalEUR += item.merchandiseSubtotalEUR || 0;
+    grouped[item.shopId].paymentFeeEUR += item.paymentFeeEUR || 0;
+    grouped[item.shopId].subtotalEUR += item.subtotalEUR;
   });
 
 
