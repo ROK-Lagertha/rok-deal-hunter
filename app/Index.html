@@ -631,7 +631,7 @@
 
 
 
-    <!-- SHOP SELECTION — STAGE 1: UI ONLY -->
+    <!-- SHOP SELECTION — STAGE 2: MARKET-DRIVEN MULTI-SELECT -->
 
     <fieldset class="settings-group" id="shopSelectionGroup">
 
@@ -644,7 +644,6 @@
           id="allShops"
           type="checkbox"
           checked
-          disabled
         >
 
         <span data-i18n="ALL_SHOPS">
@@ -652,8 +651,17 @@
         </span>
       </label>
 
+      <div
+        id="shopOptions"
+        class="checkbox-grid"
+      >
+        <span class="field-hint">
+          Loading shops for this market...
+        </span>
+      </div>
+
       <div class="field-hint">
-        Stage 1: the shop selector is visible only. Market-based shop loading and filtering will be connected in the next step.
+        Select one or more eligible shops. Changing your market or maximum account access refreshes this list automatically.
       </div>
 
     </fieldset>

@@ -928,6 +928,88 @@ function paymentMethodCode_(method) {
   return m.replace(/[^A-Z0-9]+/g, '_');
 }
 
+
+/* =========================================================
+   SHOP OPTIONS BY MARKET
+   Stage 2: UI eligibility only. The Deal Engine does not yet
+   filter by the user's selected shop IDs.
+   ========================================================= */
+
+function getShopOptionsForMarket(market, maxAccess) {
+
+  const requestedMarket = upper_(market);
+  const accessLimit = Number(maxAccess || 3);
+
+  if (!requestedMarket) {
+    return [];
+  }
+
+  const shops = getSheetObjects_(CONFIG.SHEETS.SHOPS);
+  const shopMarkets = getSheetObjects_(CONFIG.SHEETS.SHOP_MARKETS);
+
+  const shopById = {};
+
+  shops.forEach(function(row) {
+
+    const id = upper_(firstValue_(row, ['Shop ID']));
+
+    if (!id) return;
+
+    shopById[id] = {
+      id: id,
+      name: normalize_(firstValue_(row, ['Shop', 'Name'])) || id,
+      active: boolean_(firstValue_(row, ['Active', 'Enabled'])),
+      accessLevel: Number(firstValue_(row, ['Access Level'])) || 99,
+      coverageStatus: upper_(firstValue_(row, ['Coverage Status']))
+    };
+  });
+
+  const eligibleAvailability = {
+    'AVAILABLE': true,
+    'AVAILABLE_GLOBAL': true,
+    'AVAILABLE_GLOBAL_EUR': true,
+    'AVAILABLE_LOCALIZED': true
+  };
+
+  const resultById = {};
+
+  shopMarkets.forEach(function(row) {
+
+    const rowMarket = upper_(firstValue_(row, ['Market Code', 'Market']));
+    const shopId = upper_(firstValue_(row, ['Shop ID']));
+    const availability = upper_(firstValue_(row, ['Availability']));
+    const routeAccess = Number(firstValue_(row, ['Access Level'])) || 99;
+    const shop = shopById[shopId];
+
+    if (rowMarket !== requestedMarket) return;
+    if (!eligibleAvailability[availability]) return;
+    if (!shop || !shop.active) return;
+
+    const effectiveAccess = Math.max(shop.accessLevel, routeAccess);
+
+    if (effectiveAccess > accessLimit) return;
+
+    resultById[shopId] = {
+      id: shopId,
+      name: shop.name,
+      accessLevel: effectiveAccess,
+      availability: availability,
+      currency: upper_(firstValue_(row, ['Charged Currency', 'Currency'])),
+      routeType: upper_(firstValue_(row, ['Route Type', 'Route/Mapping'])),
+      url: normalize_(firstValue_(row, ['Purchase URL', 'URL']))
+    };
+  });
+
+  return Object.keys(resultById)
+    .map(function(id) {
+      return resultById[id];
+    })
+    .sort(function(a, b) {
+      return a.name.localeCompare(b.name);
+    });
+}
+
+
 function getPaymentOptionsForMarket(market, maxAccess) {
   market = upper_(market || 'DE');
   maxAccess = Math.min(4, Math.max(1, parseInt(maxAccess || 3, 10)));
