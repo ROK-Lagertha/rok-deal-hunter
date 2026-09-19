@@ -995,6 +995,25 @@ select:disabled {
 }
 
 
+
+.route-status.partial,
+.route-status.fee-pending,
+.route-status.stale {
+  color: var(--orange);
+  background: var(--orange-soft);
+  border: 1px solid rgba(231, 168, 92, .18);
+}
+
+.route-status.unavailable {
+  color: var(--red);
+  background: var(--red-soft);
+  border: 1px solid rgba(239, 123, 123, .18);
+}
+
+.route-status[title] {
+  cursor: help;
+}
+
 /* =========================================================
    COUPON
    ========================================================= */

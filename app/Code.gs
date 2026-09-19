@@ -13,7 +13,8 @@ const CONFIG = {
     TRANSLATIONS: 'Translations',
     MARKETS: 'Markets',
     CURRENCIES: 'Currencies',
-    PAYMENT_MARKETS: 'Payment Markets'
+    PAYMENT_MARKETS: 'Payment Markets',
+    SETTINGS: 'Settings'
   }
 };
 
@@ -337,6 +338,7 @@ function getBootstrapData() {
       return {
         id: normalize_(firstValue_(row, ['Package ID'])),
         name: normalize_(firstValue_(row, ['Package'])),
+        tier: normalize_(firstValue_(row, ['Tier'])),
         referenceEUR: number_(
           firstValue_(row, ['Reference EUR'])
         ),
@@ -762,6 +764,61 @@ function filterEligibleShopIdsBySelection_(eligibleShopIds, shopMode, shopIds) {
 
 
 /* =========================================================
+   IDEA-006: USER-FACING DATA CONFIDENCE STATUS
+   ========================================================= */
+
+function getSettingValue_(key, fallback) {
+  const rows = getSheetObjects_(CONFIG.SHEETS.SETTINGS);
+  const wanted = normalize_(key);
+  const row = rows.find(function(item) {
+    return normalize_(firstValue_(item, ['Setting'])) === wanted;
+  });
+  if (!row) return fallback;
+  const value = firstValue_(row, ['Value']);
+  return value === '' || value == null ? fallback : value;
+}
+
+function isStaleDate_(value, freshnessDays) {
+  if (!value) return false;
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return false;
+  return (Date.now() - d.getTime()) > Number(freshnessDays || 30) * 86400000;
+}
+
+function deriveCandidateDataStatus_(candidate, freshnessDays) {
+  if (!candidate) return 'PARTIAL';
+  if (candidate.routeAvailability && candidate.routeAvailability !== 'AVAILABLE') return 'UNAVAILABLE';
+  if (isStaleDate_(candidate.priceVerifiedAt, freshnessDays) ||
+      isStaleDate_(candidate.paymentVerifiedAt, freshnessDays) ||
+      isStaleDate_(candidate.shopCheckedAt, freshnessDays)) return 'STALE';
+
+  /* IDEA-006: the selected Payments row is not the only source of checkout-cost
+     confidence. A verified payment method must not hide an explicitly
+     unverified cost/route status stored on the concrete Prices row. */
+  const pricePaymentCostStatus = upper_(candidate.pricePaymentCostStatus);
+  const checkoutRouteStatus = upper_(candidate.checkoutRouteStatus);
+  const feePendingStatuses = [
+    'UNVERIFIED', 'FEE_UNKNOWN', 'PROVIDER_FEE_UNKNOWN', 'FEE_PENDING',
+    'COST_UNVERIFIED', 'UNKNOWN', 'PENDING'
+  ];
+  const priceSaysFeePending = feePendingStatuses.indexOf(pricePaymentCostStatus) !== -1;
+  const routeSaysFeePending = feePendingStatuses.indexOf(checkoutRouteStatus) !== -1;
+
+  if (candidate.paymentStatus !== 'COST_VERIFIED' || priceSaysFeePending || routeSaysFeePending) {
+    return 'FEE_PENDING';
+  }
+  if (candidate.priceStatus !== 'VERIFIED_MARKET') return 'PARTIAL';
+  return 'VERIFIED';
+}
+
+function mergeDataStatus_(current, next) {
+  const weight = { VERIFIED: 0, PARTIAL: 1, FEE_PENDING: 2, STALE: 3, UNAVAILABLE: 4 };
+  const a = weight[current] == null ? 1 : weight[current];
+  const b = weight[next] == null ? 1 : weight[next];
+  return b > a ? next : current;
+}
+
+/* =========================================================
    TIER OPTIMIZER
    ========================================================= */
 
@@ -772,6 +829,7 @@ function getTierCandidates_(options) {
   const payments = getSheetObjects_(CONFIG.SHEETS.PAYMENTS);
   const markets = getSheetObjects_(CONFIG.SHEETS.MARKETS);
   const coupons = getSheetObjects_(CONFIG.SHEETS.COUPONS);
+  const freshnessDays = number_(getSettingValue_('Deal Freshness Days', 30)) || 30;
   const newCustomerShopIds = Array.isArray(options.newCustomerShopIds)
     ? options.newCustomerShopIds.map(normalize_)
     : [];
@@ -848,8 +906,15 @@ function getTierCandidates_(options) {
         merchandiseSubtotalEUR: merchandiseSubtotalEUR,
         subtotalEUR: merchandiseSubtotalEUR,
         priceStatus: marketCodeMatches_(firstValue_(priceRow, ['Market Code']), options.market)
-          ? 'VERIFIED_MARKET' : 'VERIFIED_GLOBAL_FALLBACK'
+          ? 'VERIFIED_MARKET' : 'VERIFIED_GLOBAL_FALLBACK',
+        priceVerifiedAt: firstValue_(priceRow, ['Timestamp', 'Verified At']),
+        paymentVerifiedAt: payment.verifiedAt,
+        shopCheckedAt: firstValue_(shop, ['Last Checked']),
+        pricePaymentCostStatus: firstValue_(priceRow, ['Payment Cost Status']),
+        checkoutRouteStatus: firstValue_(priceRow, ['Checkout Route Status']),
+        routeAvailability: 'AVAILABLE'
       };
+      candidate.dataStatus = deriveCandidateDataStatus_(candidate, freshnessDays);
       if (!best || candidate.merchandiseSubtotalEUR < best.merchandiseSubtotalEUR) best = candidate;
     });
     if (best) candidates.push(best);
@@ -1230,7 +1295,8 @@ function getVerifiedPaymentOptions_(shopId, acceptedPayments, paymentRows) {
       status: 'COST_VERIFIED',
       rate: rate,
       fixedEUR: fixedEUR,
-      priority: priority
+      priority: priority,
+      verifiedAt: firstValue_(row, ['Verified At'])
     };
   }).filter(Boolean);
 }
@@ -1317,6 +1383,7 @@ function groupRoutesByShop_(components) {
         purchaseUrl: item.purchaseUrl,
         payment: item.payment,
         paymentStatus: item.paymentStatus,
+        dataStatus: item.dataStatus || 'PARTIAL',
         accessLevel: item.accessLevel,
         coupon: item.coupon,
         couponApplied: item.couponApplied,
@@ -1341,6 +1408,11 @@ function groupRoutesByShop_(components) {
         subtotalEUR: item.subtotalEUR
       });
 
+
+    grouped[item.shopId].dataStatus = mergeDataStatus_(
+      grouped[item.shopId].dataStatus,
+      item.dataStatus || 'PARTIAL'
+    );
 
     grouped[item.shopId].baseMerchandiseEUR +=
       (item.basePriceEUR != null ? item.basePriceEUR * item.quantity : item.merchandiseSubtotalEUR);

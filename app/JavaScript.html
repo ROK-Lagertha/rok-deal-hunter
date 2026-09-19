@@ -273,36 +273,34 @@ function getPackageLabel(item) {
   const fallback =
     String(item && item.name || id);
 
-  const tierReferenceEUR = {
-    'TIER_099': 0.99,
-    'TIER_199': 1.99,
-    'TIER_299': 2.99,
-    'TIER_499': 4.99,
-    'TIER_999': 9.99,
-    'TIER_1499': 14.99,
-    'TIER_1999': 19.99,
-    'TIER_2999': 29.99,
-    'TIER_4999': 49.99,
-    'TIER_7499': 74.99,
-    'TIER_9999': 99.99,
-    'TIER_49999': 499.99,
-    'TIER_99999': 999.99
-  };
+  /*
+   * Generic RoK package tiers are product identities, not FX values.
+   * Lilith uses the same nominal tier number for EUR and USD (e.g. 4.99),
+   * so changing the display currency must change only the currency symbol /
+   * locale formatting, never convert the tier through unitsPerEUR.
+   *
+   * The authoritative numeric tier comes from Packages!Tier. The ID parser
+   * below is only a backwards-compatible fallback for older bootstrap data.
+   */
+  const tierMatch = id.match(/^TIER_(\d+)$/);
+  let nominalTier = Number(item && item.tier);
 
-  const tierPrices = {};
+  if (!Number.isFinite(nominalTier) && tierMatch) {
+    nominalTier = Number(tierMatch[1]) / 100;
+  }
 
-  Object.keys(tierReferenceEUR).forEach(function(tierId) {
-    tierPrices[tierId] =
-      formatDisplayMoney(tierReferenceEUR[tierId]);
-  });
+  const tierPrice = Number.isFinite(nominalTier)
+    ? formatNominalTierMoney(nominalTier)
+    : null;
 
-  if (tierPrices[id]) {
+  if (tierPrice && tierMatch) {
     return packageTranslation_(
       'PACKAGE_ANY_PACK',
       fallback,
-      { PRICE: tierPrices[id] }
+      { PRICE: tierPrice }
     );
   }
+
 
   const voucherTier =
     id.match(/^LILITH_SV_(099|199|299|499|999|1499|1999|4999|9999)$/);
@@ -311,10 +309,13 @@ function getPackageLabel(item) {
     const tierId =
       'TIER_' + voucherTier[1];
 
+    const voucherAmount =
+      Number(voucherTier[1]) / 100;
+
     return packageTranslation_(
       'PACKAGE_SHIMMERING_VOUCHER',
       fallback,
-      { PRICE: tierPrices[tierId] || fallback }
+      { PRICE: formatNominalTierMoney(voucherAmount) }
     );
   }
 
@@ -2206,39 +2207,42 @@ function createShopCard(route) {
   card.appendChild(list);
 
 
-  /* PAYMENT STATUS */
+  /* IDEA-006: USER-FACING DATA CONFIDENCE STATUS */
 
-  const status =
-    document.createElement('div');
-
-  status.className =
-    'route-status';
-
-
-  if (
-    route.paymentStatus ===
-    'COST_VERIFIED'
-  ) {
-
-    status.classList.add(
-      'verified'
-    );
-
-    status.textContent =
-      '✓ ' + translatedOr_('PAYMENT_COST_VERIFIED', 'Payment cost verified');
-
-  } else {
-
-    status.classList.add(
-      'warning'
-    );
-
-    status.textContent =
-      '⚠ ' + translatedOr_('PAYMENT_COST_UNVERIFIED', 'Payment method known — exact checkout cost not verified');
-
-  }
-
-
+  const statusCode = String(route.dataStatus || 'PARTIAL').toUpperCase();
+  const statusConfig = {
+    VERIFIED: {
+      icon: '✓', cls: 'verified',
+      label: 'DATA_STATUS_VERIFIED', help: 'DATA_STATUS_VERIFIED_HELP',
+      fallback: 'Verified', helpFallback: 'Price and relevant checkout costs are verified.'
+    },
+    FEE_PENDING: {
+      icon: '⚠', cls: 'fee-pending',
+      label: 'DATA_STATUS_FEE_PENDING', help: 'DATA_STATUS_FEE_PENDING_HELP',
+      fallback: 'Fee pending', helpFallback: 'The price is known, but at least one relevant payment fee is not fully verified yet.'
+    },
+    PARTIAL: {
+      icon: '◐', cls: 'partial',
+      label: 'DATA_STATUS_PARTIAL', help: 'DATA_STATUS_PARTIAL_HELP',
+      fallback: 'Partially verified', helpFallback: 'The deal is usable, but some data components are not fully confirmed yet.'
+    },
+    STALE: {
+      icon: '↻', cls: 'stale',
+      label: 'DATA_STATUS_STALE', help: 'DATA_STATUS_STALE_HELP',
+      fallback: 'Stale', helpFallback: 'The data is older than the defined freshness period and should be rechecked.'
+    },
+    UNAVAILABLE: {
+      icon: '×', cls: 'unavailable',
+      label: 'DATA_STATUS_UNAVAILABLE', help: 'DATA_STATUS_UNAVAILABLE_HELP',
+      fallback: 'Temporarily unavailable', helpFallback: 'The shop or route is currently not purchasable.'
+    }
+  };
+  const statusDef = statusConfig[statusCode] || statusConfig.PARTIAL;
+  const status = document.createElement('div');
+  status.className = 'route-status ' + statusDef.cls;
+  status.setAttribute('title', translatedOr_(statusDef.help, statusDef.helpFallback));
+  status.setAttribute('aria-label', translatedOr_(statusDef.help, statusDef.helpFallback));
+  status.textContent = statusDef.icon + ' ' + translatedOr_(statusDef.label, statusDef.fallback);
   card.appendChild(status);
 
 
@@ -2584,6 +2588,35 @@ function getFormattingLocale() {
   return meta && meta.code
     ? meta.code
     : 'en';
+}
+
+
+function formatNominalTierMoney(nominalValue) {
+
+  if (!Number.isFinite(Number(nominalValue))) {
+    return '—';
+  }
+
+  const currency =
+    getDisplayCurrencyInfo();
+
+  try {
+
+    return new Intl.NumberFormat(
+      getFormattingLocale(),
+      {
+        style: 'currency',
+        currency: currency.code || 'EUR',
+        currencyDisplay: 'symbol'
+      }
+    ).format(Number(nominalValue));
+
+  } catch (error) {
+
+    return Number(nominalValue).toFixed(2) +
+      ' ' +
+      (currency.code || 'EUR');
+  }
 }
 
 
