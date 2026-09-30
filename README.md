@@ -37,3 +37,6 @@ Migration work lives on `feature/deal-settings`. `app/` remains the Apps Script 
 
 ### Mobile Hero 3.0
 On screens up to 760px the full panoramic artwork remains visible, while a gradient begins inside the lower artwork and merges into the application background. Hero copy overlaps this fade to reduce vertical space. Desktop behavior is unchanged.
+
+### UI baseline update — Mobile Hero 4.0
+On screens up to 760px the complete panoramic artwork is preserved, while layered navy/purple gradients blend the image into the application background. Hero copy overlaps the fading lower artwork to reduce scrolling. Desktop behavior remains unchanged.

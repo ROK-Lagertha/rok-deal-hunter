@@ -33,3 +33,10 @@ Planned work is developed on feature branches and merged only after testing.
 - Reduced mobile headline, body, proof spacing and bottom padding to shorten the first-screen scroll distance.
 - Preserved the complete panorama on narrow screens without left/right cropping.
 - Desktop hero composition remains unchanged.
+
+## 2026-09-30 — Mobile Hero 4.0
+- Replaced the hard mobile artwork edge with a layered navy/purple in-image fade.
+- Extended the fade across the actual image boundary so artwork and page background blend continuously.
+- Pulled the hero copy higher into the lower artwork/fog area.
+- Reduced mobile hero vertical footprint and spacing to bring the Deal Hunter form into view sooner.
+- Kept the full panorama visible on mobile and left the desktop hero unchanged.
