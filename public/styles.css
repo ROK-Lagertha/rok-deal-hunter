@@ -2184,3 +2184,112 @@ html[dir="rtl"] .shop-button {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* =========================================================
+   DEAL HUNTER 2.0 — MOBILE HERO 3.0
+   Full artwork + in-image fade + compact overlapping content.
+   Desktop intentionally unchanged.
+   ========================================================= */
+@media (max-width: 760px) {
+  .hero.hero-2 {
+    /* Keep the complete 3:1 panorama visible. The content is pulled
+       upward into the fading lower edge to avoid a tall stacked hero. */
+    padding-top: 33.333vw;
+    margin-bottom: 0;
+    background-size: 100% auto;
+    background-position: center top;
+    background-color: #05080e;
+  }
+
+  .hero-2::before {
+    /* No full-section veil on mobile; preserve the artwork itself. */
+    background: none;
+  }
+
+  .hero-2::after {
+    /* Fade starts INSIDE the artwork and continues into page navy,
+       removing the visible horizontal image edge. */
+    top: 0;
+    bottom: auto;
+    height: calc(33.333vw + 92px);
+    background: linear-gradient(
+      180deg,
+      rgba(5,8,14,0) 0%,
+      rgba(5,8,14,0) 42%,
+      rgba(5,8,14,.18) 57%,
+      rgba(5,8,14,.72) 76%,
+      #05080e 94%,
+      #05080e 100%
+    );
+  }
+
+  .hero-2__inner {
+    position: relative;
+    z-index: 2;
+    width: calc(100% - 28px);
+    margin-top: -76px;
+    padding: 0 0 26px;
+  }
+
+  .hero-2__content {
+    max-width: 560px;
+    text-shadow: 0 2px 16px rgba(0,0,0,.82);
+  }
+
+  .hero.hero-2 .eyebrow {
+    margin-bottom: 7px;
+    font-size: 8px;
+    letter-spacing: 1.55px;
+  }
+
+  .hero.hero-2 h1 {
+    max-width: 520px;
+    font-size: clamp(28px, 7.8vw, 40px);
+    line-height: 1;
+    letter-spacing: -1.35px;
+  }
+
+  .hero.hero-2 p {
+    max-width: 520px;
+    margin-top: 11px;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .hero-2__proof {
+    gap: 5px 11px;
+    margin-top: 12px;
+    font-size: 8px;
+    line-height: 1.35;
+  }
+}
+
+@media (max-width: 430px) {
+  .hero-2::after {
+    height: calc(33.333vw + 74px);
+  }
+
+  .hero-2__inner {
+    width: calc(100% - 24px);
+    margin-top: -48px;
+    padding-bottom: 22px;
+  }
+
+  .hero.hero-2 h1 {
+    font-size: clamp(27px, 8.8vw, 36px);
+  }
+
+  .hero.hero-2 p {
+    margin-top: 9px;
+    font-size: 11.5px;
+    line-height: 1.42;
+  }
+
+  .hero-2__proof {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 10px;
+    font-size: 7.5px;
+  }
+}

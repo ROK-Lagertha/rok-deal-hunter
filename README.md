@@ -34,3 +34,6 @@ The Google Sheet remains the live data source. Shop prices, routes, markets, cur
 ## Cloudflare migration
 
 Migration work lives on `feature/deal-settings`. `app/` remains the Apps Script fallback; `public/`, `src/` and `wrangler.jsonc` form the Cloudflare deployment. See `docs/cloudflare-migration.md`.
+
+### Mobile Hero 3.0
+On screens up to 760px the full panoramic artwork remains visible, while a gradient begins inside the lower artwork and merges into the application background. Hero copy overlaps this fade to reduce vertical space. Desktop behavior is unchanged.
