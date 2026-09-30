@@ -18,3 +18,9 @@ node_modules/
 *.tmp
 *.bak
 *.zip
+
+# Cloudflare / Wrangler
+.wrangler/
+.wrangler-dry-run/
+.dev.vars*
+!.dev.vars.example

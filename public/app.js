@@ -1,0 +1,2853 @@
+/* =========================================================
+   GLOBAL STATE
+   ========================================================= */
+
+let quantity = 1;
+let bootstrapData = null;
+let lastDealResult = null;
+
+const STORAGE_KEY = 'rokDealHunterSettingsV3';
+
+
+/* =========================================================
+   APP START
+   ========================================================= */
+
+document.addEventListener('DOMContentLoaded', function() {
+  loadBootstrapData();
+});
+
+
+/* =========================================================
+   BOOTSTRAP
+   ========================================================= */
+
+function loadBootstrapData() {
+
+  setHunterStatus(
+    'Connecting to the RoK Deal Hunter backend...'
+  );
+
+  google.script.run
+
+    .withSuccessHandler(function(data) {
+
+      bootstrapData = data;
+
+      populatePackages(data.packages || []);
+      populateMarkets(data.markets || []);
+      populateLanguages(data.languages || []);
+      populateCurrencies(data.currencies || []);
+      /* Payment controls are market-driven; do not render a global/bootstrap list. */
+      populateAccessLevels(data.accessLevels || []);
+      populateDealModes(data.dealModes || []);
+      ensureResultCountControl_();
+      bindMarketCurrencySync_(data.markets || []);
+      bindDynamicShopMarkets_();
+      bindDynamicPaymentMarkets_();
+
+      loadSettings();
+
+      const languageSelect =
+        document.getElementById('language');
+
+      if (
+        languageSelect &&
+        !languageSelect.dataset.i18nBound
+      ) {
+        languageSelect.addEventListener(
+          'change',
+          applyLanguage
+        );
+
+        languageSelect.dataset.i18nBound =
+          'true';
+      }
+
+      enableControls();
+
+      applyLanguage();
+
+      setHunterStatus(
+        'Ready. Lilith may now begin to worry. 😏'
+      );
+
+    })
+
+    .withFailureHandler(function(error) {
+
+      console.error(
+        'Bootstrap error:',
+        error
+      );
+
+      setHunterStatus(
+        'Backend connection failed.'
+      );
+
+      alert(
+        'RoK Deal Hunter could not load the backend.\n\n' +
+        getErrorMessage(error)
+      );
+
+    })
+
+    .getBootstrapData();
+}
+
+
+/* =========================================================
+   INTERNATIONALIZATION
+   ========================================================= */
+
+const LANGUAGE_META_FALLBACK = {
+  'Deutsch': { code: 'de', dir: 'ltr' },
+  'English': { code: 'en', dir: 'ltr' },
+  'Français': { code: 'fr', dir: 'ltr' },
+  'Español': { code: 'es', dir: 'ltr' },
+  'العربية': { code: 'ar', dir: 'rtl' },
+  'Türkçe': { code: 'tr', dir: 'ltr' },
+  'Русский': { code: 'ru', dir: 'ltr' },
+  'Українська': { code: 'uk', dir: 'ltr' },
+  'Oʻzbekcha': { code: 'uz', dir: 'ltr' },
+  'ไทย': { code: 'th', dir: 'ltr' },
+  'Tiếng Việt': { code: 'vi', dir: 'ltr' },
+  'Bahasa Indonesia': { code: 'id', dir: 'ltr' },
+  'Bahasa Melayu': { code: 'ms', dir: 'ltr' },
+  'සිංහල': { code: 'si', dir: 'ltr' },
+  'தமிழ்': { code: 'ta', dir: 'ltr' },
+  'Português (Brasil)': { code: 'pt-BR', dir: 'ltr' },
+  'Nederlands': { code: 'nl', dir: 'ltr' },
+  'Қазақша': { code: 'kk', dir: 'ltr' },
+  'Suomi': { code: 'fi', dir: 'ltr' }
+};
+
+function getSelectedLanguage() {
+  const select = document.getElementById('language');
+  return (select && select.value) || 'Deutsch';
+}
+
+function getLanguageMeta(language) {
+  const serverMeta = bootstrapData && bootstrapData.languageMeta
+    ? bootstrapData.languageMeta
+    : {};
+  return serverMeta[language] || LANGUAGE_META_FALLBACK[language] ||
+    { code: 'en', dir: 'ltr' };
+}
+
+function t(key, replacements) {
+  const language = getSelectedLanguage();
+  const all = bootstrapData && bootstrapData.translations
+    ? bootstrapData.translations
+    : {};
+  const fallbackLanguage =
+    (bootstrapData && bootstrapData.fallbackLanguage) || 'English';
+
+  let value =
+    (all[language] && all[language][key]) ||
+    (all[fallbackLanguage] && all[fallbackLanguage][key]) ||
+    key;
+
+  Object.keys(replacements || {}).forEach(function(name) {
+    value = String(value).split('{' + name + '}').join(replacements[name]);
+  });
+
+  return String(value);
+}
+
+function applyLanguage() {
+  const language = getSelectedLanguage();
+  const meta = getLanguageMeta(language);
+
+  document.documentElement.lang = meta.code || 'en';
+  document.documentElement.dir = meta.dir || 'ltr';
+  document.body.classList.toggle('rtl', meta.dir === 'rtl');
+
+  document.querySelectorAll('[data-i18n]').forEach(function(element) {
+    const key = element.getAttribute('data-i18n');
+    if (key) element.textContent = t(key);
+  });
+
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(function(element) {
+    const key = element.getAttribute('data-i18n-placeholder');
+    if (key) element.setAttribute('placeholder', t(key));
+  });
+
+  translateDynamicControls();
+
+  const huntButton = document.getElementById('huntButton');
+  if (huntButton && !huntButton.disabled) {
+    huntButton.textContent = t('HUNT_DEAL');
+  }
+
+  if (lastDealResult) {
+    renderDealResult(lastDealResult, false);
+  }
+}
+
+function translateDynamicControls() {
+  const packageSelect = document.getElementById('packageSelect');
+
+  if (packageSelect) {
+    Array.from(packageSelect.options).forEach(function(option) {
+
+      if (!option.value) {
+        option.textContent = t('CHOOSE_PACKAGE');
+        return;
+      }
+
+      const item =
+        (bootstrapData.packages || []).find(function(packageItem) {
+          return String(packageItem.id) === String(option.value);
+        });
+
+      if (item) {
+        option.textContent = getPackageLabel(item);
+      }
+    });
+  }
+
+  const dealMode = document.getElementById('dealMode');
+  if (dealMode) {
+    Array.from(dealMode.options).forEach(function(option) {
+      const key = String(option.value || '').toUpperCase();
+      if (key === 'CHEAPEST' || key === 'ONE_SHOP' || key === 'SIMPLE') {
+        option.textContent = t(key);
+      }
+    });
+  }
+
+  const access = document.getElementById('access');
+  if (access) {
+    const accessKeys = {
+      '1': 'ACCESS_LEVEL_1',
+      '2': 'ACCESS_LEVEL_2',
+      '3': 'ACCESS_LEVEL_3',
+      '4': 'ACCESS_LEVEL_4'
+    };
+    Array.from(access.options).forEach(function(option) {
+      if (accessKeys[option.value]) {
+        const translated = t(accessKeys[option.value]);
+        if (translated !== accessKeys[option.value]) {
+          const shortLabel = String(translated)
+            .split(' — ')[0]
+            .trim();
+
+          option.textContent = option.value + ' — ' + shortLabel;
+        }
+      }
+    });
+  }
+}
+
+/* =========================================================
+   GENERIC SELECT HELPER
+   ========================================================= */
+
+function addOption(select, value, label) {
+
+  const option =
+    document.createElement('option');
+
+  option.value =
+    String(value);
+
+  option.textContent =
+    label;
+
+  select.appendChild(option);
+}
+
+
+/* =========================================================
+   PACKAGE TRANSLATIONS
+   ========================================================= */
+
+function getPackageLabel(item) {
+
+  const id =
+    String(item && item.id || '');
+
+  const fallback =
+    String(item && item.name || id);
+
+  /*
+   * Generic RoK package tiers are product identities, not FX values.
+   * Lilith uses the same nominal tier number for EUR and USD (e.g. 4.99),
+   * so changing the display currency must change only the currency symbol /
+   * locale formatting, never convert the tier through unitsPerEUR.
+   *
+   * The authoritative numeric tier comes from Packages!Tier. The ID parser
+   * below is only a backwards-compatible fallback for older bootstrap data.
+   */
+  const tierMatch = id.match(/^TIER_(\d+)$/);
+  let nominalTier = Number(item && item.tier);
+
+  if (!Number.isFinite(nominalTier) && tierMatch) {
+    nominalTier = Number(tierMatch[1]) / 100;
+  }
+
+  const tierPrice = Number.isFinite(nominalTier)
+    ? formatNominalTierMoney(nominalTier)
+    : null;
+
+  if (tierPrice && tierMatch) {
+    return packageTranslation_(
+      'PACKAGE_ANY_PACK',
+      fallback,
+      { PRICE: tierPrice }
+    );
+  }
+
+
+  const voucherTier =
+    id.match(/^LILITH_SV_(099|199|299|499|999|1499|1999|4999|9999)$/);
+
+  if (voucherTier) {
+    const tierId =
+      'TIER_' + voucherTier[1];
+
+    const voucherAmount =
+      Number(voucherTier[1]) / 100;
+
+    return packageTranslation_(
+      'PACKAGE_SHIMMERING_VOUCHER',
+      fallback,
+      { PRICE: formatNominalTierMoney(voucherAmount) }
+    );
+  }
+
+  const gemMap = {
+    'GEM_200': ['PACKAGE_FISTFUL_GEMS', '200'],
+    'GEM_1050': ['PACKAGE_PILE_GEMS', '1050'],
+    'GEM_2200': ['PACKAGE_POUCH_GEMS', '2200'],
+    'GEM_4600': ['PACKAGE_BUCKET_GEMS', '4600'],
+    'GEM_12000': ['PACKAGE_BARREL_GEMS', '12000'],
+    'GEM_25000': ['PACKAGE_WAGON_GEMS', '25000']
+  };
+
+  if (gemMap[id]) {
+    return packageTranslation_(
+      gemMap[id][0],
+      fallback,
+      { AMOUNT: gemMap[id][1] }
+    );
+  }
+
+  const bundleKeys = {
+    'LILITH_SV_7D_299': 'PACKAGE_7_DAY_VOUCHER',
+    'LILITH_SV_14D_299': 'PACKAGE_14_DAY_VOUCHER',
+    'LILITH_SV_30D_299': 'PACKAGE_30_DAY_VOUCHER',
+    'LILITH_SV_STACK': 'PACKAGE_STACK_VOUCHERS',
+    'LILITH_SV_10X499': 'PACKAGE_10X499_VOUCHER',
+    'LILITH_SV_BAG': 'PACKAGE_BAG_VOUCHERS',
+    'LILITH_SV_HEAP': 'PACKAGE_HEAP_VOUCHERS',
+    'LILITH_CRYSTAL_MEGA': 'PACKAGE_CRYSTAL_MEGA'
+  };
+
+  if (bundleKeys[id]) {
+    return packageTranslation_(
+      bundleKeys[id],
+      fallback
+    );
+  }
+
+  return fallback;
+}
+
+
+function packageTranslation_(key, fallback, replacements) {
+
+  const translated =
+    t(key, replacements);
+
+  return translated === key
+    ? fallback
+    : translated;
+}
+
+
+/* =========================================================
+   PACKAGES
+   ========================================================= */
+
+function populatePackages(packages) {
+
+  const select =
+    document.getElementById('packageSelect');
+
+  select.innerHTML = '';
+
+  addOption(
+    select,
+    '',
+    t('CHOOSE_PACKAGE')
+  );
+
+  packages.forEach(function(item) {
+
+    addOption(
+      select,
+      item.id,
+      getPackageLabel(item)
+    );
+
+  });
+}
+
+
+/* =========================================================
+   MARKETS
+   ========================================================= */
+
+function populateMarkets(markets) {
+
+  const select =
+    document.getElementById('market');
+
+  select.innerHTML = '';
+
+  if (!markets.length) {
+
+    addOption(
+      select,
+      '',
+      'No markets available'
+    );
+
+    return;
+  }
+
+  markets.forEach(function(market) {
+
+    addOption(
+      select,
+      market.code,
+      market.name
+    );
+
+  });
+}
+
+
+function bindMarketCurrencySync_(markets) {
+  const marketSelect = document.getElementById('market');
+  const currencySelect = document.getElementById('currency');
+
+  if (!marketSelect || !currencySelect || marketSelect.dataset.currencySyncBound) {
+    return;
+  }
+
+  const defaults = {};
+  (markets || []).forEach(function(market) {
+    if (market && market.code && market.defaultCurrency) {
+      defaults[String(market.code).toUpperCase()] = String(market.defaultCurrency).toUpperCase();
+    }
+  });
+
+  marketSelect.addEventListener('change', function() {
+    const currency = defaults[String(marketSelect.value || '').toUpperCase()];
+    if (!currency) return;
+
+    const optionExists = Array.from(currencySelect.options).some(function(option) {
+      return option.value === currency;
+    });
+
+    if (optionExists) {
+      currencySelect.value = currency;
+    }
+  });
+
+  marketSelect.dataset.currencySyncBound = 'true';
+}
+
+
+/* =========================================================
+   LANGUAGES
+   ========================================================= */
+
+function populateLanguages(languages) {
+
+  const select =
+    document.getElementById('language');
+
+  select.innerHTML = '';
+
+  if (!languages.length) {
+
+    addOption(
+      select,
+      '',
+      'No languages available'
+    );
+
+    return;
+  }
+
+  languages.forEach(function(language) {
+
+    addOption(
+      select,
+      language,
+      language
+    );
+
+  });
+}
+
+
+/* =========================================================
+   CURRENCIES
+   ========================================================= */
+
+function populateCurrencies(currencies) {
+
+  const select =
+    document.getElementById('currency');
+
+  select.innerHTML = '';
+
+  currencies.forEach(function(currency) {
+
+    const code = typeof currency === 'string'
+      ? currency
+      : String(currency.code || '');
+
+    const name = typeof currency === 'string'
+      ? currency
+      : String(currency.name || currency.code || '');
+
+    const label = name && name !== code
+      ? code + ' - ' + name
+      : code;
+
+    addOption(
+      select,
+      code,
+      label
+    );
+
+  });
+}
+
+
+/* =========================================================
+   SHOP SELECTION
+   Stage 2: market-driven UI + saved preference.
+   The Deal Engine is intentionally NOT filtered yet.
+   ========================================================= */
+
+function populateShopOptions(shops, options) {
+
+  options = options || {};
+
+  const container = document.getElementById('shopOptions');
+  const allToggle = document.getElementById('allShops');
+
+  if (!container || !allToggle) return;
+
+  const selectAll = options.selectAll !== false;
+  const wanted = (options.selectedValues || []).map(function(value) {
+    return String(value || '').toUpperCase();
+  });
+
+  container.innerHTML = '';
+
+  if (!shops || !shops.length) {
+    allToggle.checked = false;
+    allToggle.disabled = true;
+
+    const empty = document.createElement('div');
+    empty.className = 'payment-empty';
+    empty.textContent = translatedOr_(
+      'NO_SHOPS_FOR_MARKET',
+      'No verified eligible shops are currently available for this market and access level.'
+    );
+    container.appendChild(empty);
+    return;
+  }
+
+  allToggle.disabled = false;
+
+  shops.forEach(function(shop) {
+
+    const label = document.createElement('label');
+    label.className = 'payment-option';
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'shopOption';
+    input.value = shop.id;
+    input.checked = selectAll ||
+      wanted.indexOf(String(shop.id || '').toUpperCase()) !== -1;
+
+    input.addEventListener('change', function() {
+      syncAllShopsToggle_();
+      schedulePaymentRefresh_({ preserveSelection: true });
+    });
+
+    const text = document.createElement('span');
+    text.textContent = shop.name;
+
+    if (shop.accessLevel) {
+      const meta = document.createElement('small');
+      meta.className = 'payment-recommended-label';
+      meta.textContent = ' · Access ' + shop.accessLevel;
+      text.appendChild(meta);
+    }
+
+    label.appendChild(input);
+    label.appendChild(text);
+    container.appendChild(label);
+  });
+
+  syncAllShopsToggle_();
+}
+
+
+function syncAllShopsToggle_() {
+
+  const allToggle = document.getElementById('allShops');
+  const options = Array.from(
+    document.querySelectorAll('input[name="shopOption"]')
+  );
+
+  if (!allToggle || !options.length) return;
+
+  allToggle.checked = options.every(function(input) {
+    return input.checked;
+  });
+}
+
+
+function bindAllShopsToggle_() {
+
+  const allToggle = document.getElementById('allShops');
+
+  if (!allToggle || allToggle.dataset.shopToggleBound) return;
+
+  allToggle.addEventListener('change', function() {
+
+    document.querySelectorAll('input[name="shopOption"]').forEach(function(input) {
+      input.checked = allToggle.checked;
+    });
+
+    schedulePaymentRefresh_({ preserveSelection: true });
+  });
+
+  allToggle.dataset.shopToggleBound = 'true';
+}
+
+
+let shopMarketRequestToken_ = 0;
+
+
+function bindDynamicShopMarkets_() {
+
+  bindAllShopsToggle_();
+
+  const marketSelect = document.getElementById('market');
+  const accessSelect = document.getElementById('access');
+
+  if (marketSelect && !marketSelect.dataset.shopMarketBound) {
+    marketSelect.addEventListener('change', function() {
+      refreshShopsForMarket_({ preserveSelection: false, selectAll: true });
+    });
+    marketSelect.dataset.shopMarketBound = 'true';
+  }
+
+  if (accessSelect && !accessSelect.dataset.shopMarketBound) {
+    accessSelect.addEventListener('change', function() {
+      refreshShopsForMarket_({ preserveSelection: true });
+    });
+    accessSelect.dataset.shopMarketBound = 'true';
+  }
+}
+
+
+function refreshShopsForMarket_(options) {
+
+  options = options || {};
+
+  const marketSelect = document.getElementById('market');
+  const accessSelect = document.getElementById('access');
+  const container = document.getElementById('shopOptions');
+  const allToggle = document.getElementById('allShops');
+
+  if (!marketSelect || !accessSelect || !container || !allToggle) return;
+
+  const market = String(marketSelect.value || '').toUpperCase();
+  const maxAccess = Number(accessSelect.value || 3);
+
+  if (!market) return;
+
+  const currentSelected = Array.from(
+    document.querySelectorAll('input[name="shopOption"]:checked')
+  ).map(function(input) {
+    return input.value;
+  });
+
+  const selectedBefore = options.selectedValues ||
+    (options.preserveSelection === false ? [] : currentSelected);
+
+  const selectAllBefore = options.selectAll !== undefined
+    ? options.selectAll
+    : allToggle.checked;
+
+  const token = ++shopMarketRequestToken_;
+
+  allToggle.disabled = true;
+  container.classList.add('loading');
+  container.innerHTML = '';
+
+  const loading = document.createElement('div');
+  loading.className = 'payment-empty';
+  loading.textContent = translatedOr_(
+    'LOADING_SHOPS',
+    'Loading eligible shops for this market...'
+  );
+  container.appendChild(loading);
+
+  google.script.run
+    .withSuccessHandler(function(shops) {
+
+      if (token !== shopMarketRequestToken_) return;
+
+      container.classList.remove('loading');
+
+      const returned = shops || [];
+      const returnedIds = returned.map(function(shop) {
+        return String(shop.id || '').toUpperCase();
+      });
+
+      const validSelection = selectedBefore.filter(function(id) {
+        return returnedIds.indexOf(String(id || '').toUpperCase()) !== -1;
+      });
+
+      const shouldSelectAll =
+        selectAllBefore ||
+        (options.preserveSelection === false && !selectedBefore.length);
+
+      populateShopOptions(returned, {
+        selectAll: shouldSelectAll,
+        selectedValues: validSelection
+      });
+
+      schedulePaymentRefresh_({
+        preserveSelection: options.preserveSelection !== false,
+        selectRecommended: options.preserveSelection === false
+      });
+    })
+    .withFailureHandler(function(error) {
+
+      if (token !== shopMarketRequestToken_) return;
+
+      container.classList.remove('loading');
+      console.error('Shop-market lookup failed:', error);
+
+      container.innerHTML = '';
+      const failed = document.createElement('div');
+      failed.className = 'payment-empty';
+      failed.textContent = translatedOr_(
+        'SHOP_MARKET_LOOKUP_FAILED',
+        'Could not refresh shops for this market.'
+      );
+      container.appendChild(failed);
+    })
+    .getShopOptionsForMarket(market, maxAccess);
+}
+
+
+let newCustomerShopIds_ = new Set();
+
+let paymentOptionsCache_ = {
+  key: '',
+  methods: []
+};
+
+let paymentRefreshTimer_ = null;
+
+
+/* =========================================================
+   PAYMENT METHODS
+   ========================================================= */
+
+function schedulePaymentRefresh_(options) {
+
+  options = options || {};
+
+  if (paymentRefreshTimer_) {
+    clearTimeout(paymentRefreshTimer_);
+  }
+
+  paymentRefreshTimer_ = setTimeout(function() {
+    paymentRefreshTimer_ = null;
+    refreshPaymentMethodsForMarket_(options);
+  }, 180);
+}
+
+
+function populatePaymentMethods(methods, options) {
+
+  options = options || {};
+
+  const container = document.getElementById('paymentMethods');
+  if (!container) return;
+
+  const previousSelection = options.selectedValues ||
+    Array.from(document.querySelectorAll('input[name="paymentMethod"]:checked'))
+      .map(function(input) { return input.value; });
+
+  const wanted = previousSelection.map(function(value) {
+    return String(value).toUpperCase();
+  });
+
+  container.innerHTML = '';
+
+  if (!methods || !methods.length) {
+    const empty = document.createElement('div');
+    empty.className = 'payment-empty';
+    empty.textContent = translatedOr_(
+      'NO_PAYMENT_METHODS_FOR_MARKET',
+      'No tracked payment methods are currently available for this market and access level.'
+    );
+    container.appendChild(empty);
+    return;
+  }
+
+  function buildOption(method) {
+    const label = document.createElement('label');
+    label.className = 'payment-option';
+
+    const recommended = String(method.preferenceTier || '').toUpperCase() === 'HIGH';
+    if (recommended) label.classList.add('recommended');
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'paymentMethod';
+    input.value = method.code;
+    input.checked = wanted.indexOf(String(method.code || '').toUpperCase()) !== -1;
+
+    const text = document.createElement('span');
+    text.textContent = method.name;
+
+    if (recommended) {
+      const badge = document.createElement('small');
+      badge.className = 'payment-recommended-label';
+      badge.textContent = ' ★ ' + translatedOr_('RECOMMENDED', 'Recommended');
+      text.appendChild(badge);
+    }
+
+    label.appendChild(input);
+    label.appendChild(text);
+    return label;
+  }
+
+  const recommended = methods.filter(function(method) {
+    return String(method.preferenceTier || '').toUpperCase() === 'HIGH';
+  });
+  const additional = methods.filter(function(method) {
+    return String(method.preferenceTier || '').toUpperCase() !== 'HIGH';
+  });
+
+  const primary = recommended.length ? recommended : methods.slice(0, Math.min(3, methods.length));
+  const primaryCodes = primary.map(function(method) { return method.code; });
+
+  primary.forEach(function(method) {
+    container.appendChild(buildOption(method));
+  });
+
+  const hiddenMethods = additional.filter(function(method) {
+    return primaryCodes.indexOf(method.code) === -1;
+  });
+
+  if (hiddenMethods.length) {
+    const details = document.createElement('details');
+    details.className = 'payment-more';
+
+    const summary = document.createElement('summary');
+    summary.className = 'payment-more-summary';
+
+    function updateSummary() {
+      const selectedHidden = hiddenMethods.filter(function(method) {
+        const input = details.querySelector('input[value="' + method.code + '"]');
+        return input && input.checked;
+      }).length;
+      summary.textContent = '+ ' +
+        translatedOr_('MORE_PAYMENT_METHODS', 'Show more payment methods') +
+        (selectedHidden ? ' (' + selectedHidden + ' ' +
+          translatedOr_('SELECTED', 'selected') + ')' : '');
+    }
+
+    const body = document.createElement('div');
+    body.className = 'payment-more-body';
+
+    hiddenMethods.forEach(function(method) {
+      const option = buildOption(method);
+      const input = option.querySelector('input');
+      input.addEventListener('change', updateSummary);
+      body.appendChild(option);
+    });
+
+    details.appendChild(summary);
+    details.appendChild(body);
+    container.appendChild(details);
+    updateSummary();
+  }
+}
+
+let paymentMarketRequestToken_ = 0;
+
+
+function bindDynamicPaymentMarkets_() {
+  /*
+   * Market/access changes refresh the shop list first.
+   * The resolved shop refresh then schedules exactly one payment refresh.
+   */
+}
+
+
+function refreshPaymentMethodsForMarket_(options) {
+
+  options = options || {};
+
+  const marketSelect = document.getElementById('market');
+  const accessSelect = document.getElementById('access');
+  const container = document.getElementById('paymentMethods');
+
+  if (!marketSelect || !accessSelect || !container) return;
+
+  const market = String(marketSelect.value || '').toUpperCase();
+  const maxAccess = Number(accessSelect.value || 3);
+
+  if (!market) return;
+
+  const selectedBefore = options.selectedValues ||
+    (options.preserveSelection === false ? [] :
+      Array.from(
+        document.querySelectorAll('input[name="paymentMethod"]:checked')
+      ).map(function(input) {
+        return input.value;
+      }));
+
+  /*
+   * Payment-market availability itself depends on market/access.
+   * Shop selection is enforced again by the Deal Engine at hunt time.
+   * Keeping this lookup independent from every shop checkbox avoids
+   * repeated full-sheet reads and keeps the settings UI responsive.
+   */
+  const cacheKey = market + '|' + maxAccess;
+
+  function renderMethods_(methods) {
+    const returned = methods || [];
+    let selection = selectedBefore.filter(function(value) {
+      const code = String(value || '').toUpperCase();
+      return returned.some(function(method) {
+        return String(method.code || '').toUpperCase() === code;
+      });
+    });
+
+    if (options.selectAll === true) {
+      selection = returned.map(function(method) {
+        return method.code;
+      });
+    } else if (options.selectRecommended === true ||
+        (!selection.length && options.preserveSelection === false)) {
+      const recommended = returned.filter(function(method) {
+        return String(method.preferenceTier || '').toUpperCase() === 'HIGH';
+      });
+      const defaults = recommended.length
+        ? recommended
+        : returned.slice(0, Math.min(3, returned.length));
+      selection = defaults.map(function(method) {
+        return method.code;
+      });
+    }
+
+    populatePaymentMethods(returned, {
+      selectedValues: selection
+    });
+  }
+
+  if (paymentOptionsCache_.key === cacheKey &&
+      Array.isArray(paymentOptionsCache_.methods) &&
+      paymentOptionsCache_.methods.length) {
+    renderMethods_(paymentOptionsCache_.methods);
+    return;
+  }
+
+  const token = ++paymentMarketRequestToken_;
+
+  /*
+   * Do not wipe the controls while loading. Existing checkboxes remain
+   * usable; only a subtle loading state is applied.
+   */
+  container.classList.add('loading');
+
+  google.script.run
+    .withSuccessHandler(function(methods) {
+
+      if (token !== paymentMarketRequestToken_) return;
+
+      container.classList.remove('loading');
+
+      paymentOptionsCache_ = {
+        key: cacheKey,
+        methods: methods || []
+      };
+
+      renderMethods_(methods || []);
+    })
+    .withFailureHandler(function(error) {
+
+      if (token !== paymentMarketRequestToken_) return;
+
+      container.classList.remove('loading');
+      console.error('Payment-market lookup failed:', error);
+
+      setHunterStatus(
+        translatedOr_(
+          'PAYMENT_MARKET_LOOKUP_FAILED',
+          'Could not refresh payment methods for this market.'
+        )
+      );
+    })
+    .getPaymentOptionsForMarket(market, maxAccess);
+}
+
+
+/* =========================================================
+   ACCESS LEVELS
+   ========================================================= */
+
+function populateAccessLevels(levels) {
+
+  const select =
+    document.getElementById('access');
+
+  select.innerHTML = '';
+
+  levels.forEach(function(item) {
+
+    addOption(
+      select,
+      item.level,
+      item.level + ' — ' + item.name
+    );
+
+  });
+}
+
+
+/* =========================================================
+   DEAL MODES
+   ========================================================= */
+
+function populateDealModes(modes) {
+
+  const select =
+    document.getElementById('dealMode');
+
+  select.innerHTML = '';
+
+  modes.forEach(function(item) {
+
+    addOption(
+      select,
+      item.code,
+      item.name
+    );
+
+  });
+}
+
+
+/* =========================================================
+   ENABLE CONTROLS
+   ========================================================= */
+
+function enableControls() {
+
+  [
+    'packageSelect',
+    'language',
+    'market',
+    'currency',
+    'access',
+    'dealMode'
+  ].forEach(function(id) {
+
+    const element =
+      document.getElementById(id);
+
+    if (element) {
+      element.disabled = false;
+    }
+
+  });
+
+
+  const huntButton =
+    document.getElementById('huntButton');
+
+  huntButton.disabled = false;
+
+  huntButton.textContent =
+    'HUNT THE DEAL';
+}
+
+
+/* =========================================================
+   QUANTITY
+   ========================================================= */
+
+function changeQuantity(change) {
+
+  quantity =
+    Math.max(
+      1,
+      quantity + change
+    );
+
+  document.getElementById(
+    'quantity'
+  ).textContent =
+    quantity;
+}
+
+
+/* =========================================================
+   SETTINGS MODAL
+   ========================================================= */
+
+function openSettings() {
+
+  document
+    .getElementById('settingsModal')
+    .classList
+    .remove('hidden');
+}
+
+
+function closeSettings() {
+
+  document
+    .getElementById('settingsModal')
+    .classList
+    .add('hidden');
+}
+
+
+/* =========================================================
+   RESULT COUNT CONTROL
+   ========================================================= */
+
+function ensureResultCountControl_() {
+  if (document.getElementById('resultCount')) return;
+
+  const dealMode = document.getElementById('dealMode');
+  if (!dealMode) return;
+
+  const anchor = dealMode.nextElementSibling || dealMode;
+
+  const label = document.createElement('label');
+  label.setAttribute('for', 'resultCount');
+  label.innerHTML = '🏆 <span>Deals anzeigen</span>';
+
+  const select = document.createElement('select');
+  select.id = 'resultCount';
+  [1, 2, 3, 4].forEach(function(count) {
+    const option = document.createElement('option');
+    option.value = String(count);
+    option.textContent = count === 1
+      ? '1 günstigster Shop'
+      : count + ' günstigste Shops';
+    select.appendChild(option);
+  });
+  select.value = '3';
+
+  const hint = document.createElement('div');
+  hint.className = 'field-hint';
+  hint.textContent = 'Zeigt bis zu vier vollständige Shop-Alternativen. Jeder Shop wird mit seiner günstigsten erlaubten und verifizierten Zahlungsart bewertet.';
+
+  anchor.insertAdjacentElement('afterend', hint);
+  anchor.insertAdjacentElement('afterend', select);
+  anchor.insertAdjacentElement('afterend', label);
+}
+
+
+/* =========================================================
+   SETTINGS
+   ========================================================= */
+
+function getCurrentSettings() {
+
+  const selectedPayments =
+    Array.from(
+      document.querySelectorAll(
+        'input[name="paymentMethod"]:checked'
+      )
+    )
+    .map(function(input) {
+      return input.value;
+    });
+
+
+  return {
+
+    language:
+      document.getElementById(
+        'language'
+      ).value,
+
+    market:
+      document.getElementById(
+        'market'
+      ).value,
+
+    currency:
+      document.getElementById(
+        'currency'
+      ).value,
+
+    shopMode:
+      (document.getElementById('allShops') &&
+       document.getElementById('allShops').checked)
+        ? 'ALL'
+        : 'SELECTED',
+
+    shopIds:
+      Array.from(
+        document.querySelectorAll('input[name="shopOption"]:checked')
+      ).map(function(input) {
+        return input.value;
+      }),
+
+    paymentMethods:
+      selectedPayments,
+
+    maxAccess:
+      Number(
+        document.getElementById(
+          'access'
+        ).value
+      ),
+
+    dealMode:
+      document.getElementById(
+        'dealMode'
+      ).value,
+
+    resultCount:
+      Number(
+        document.getElementById('resultCount')
+          ? document.getElementById('resultCount').value
+          : 3
+      ),
+
+    remember:
+      document.getElementById(
+        'rememberSettings'
+      ).checked
+
+  };
+}
+
+
+function saveSettings() {
+
+  const settings =
+    getCurrentSettings();
+
+
+  if (!settings.shopIds.length) {
+
+    alert(
+      translatedOr_('SELECT_SHOP_FIRST', 'Please select at least one shop.')
+    );
+
+    return;
+  }
+
+
+  if (!settings.paymentMethods.length) {
+
+    alert(
+      translatedOr_('SELECT_PAYMENT_FIRST', 'Please select at least one payment method.')
+    );
+
+    return;
+  }
+
+
+  if (settings.remember) {
+
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(settings)
+    );
+
+  } else {
+
+    localStorage.removeItem(
+      STORAGE_KEY
+    );
+  }
+
+
+  closeSettings();
+
+  translateDynamicControls();
+
+  if (lastDealResult) {
+    renderDealResult(lastDealResult, false);
+  }
+
+  setHunterStatus(
+    'Settings saved. Ready to hunt. 🏹'
+  );
+}
+
+
+function loadSettings() {
+
+  const saved =
+    localStorage.getItem(
+      STORAGE_KEY
+    );
+
+
+  if (saved) {
+
+    try {
+
+      const settings =
+        JSON.parse(saved);
+
+      applySettings(settings);
+
+      return;
+
+    } catch (error) {
+
+      console.error(
+        'Could not load saved settings:',
+        error
+      );
+
+    }
+  }
+
+
+  applyDefaultSettings();
+}
+
+
+function applyDefaultSettings() {
+
+  setSelectValue(
+    'language',
+    'Deutsch'
+  );
+
+  setSelectValue(
+    'market',
+    'DE'
+  );
+
+  setSelectValue(
+    'currency',
+    'EUR'
+  );
+
+  setSelectValue(
+    'access',
+    '3'
+  );
+
+  setSelectValue(
+    'dealMode',
+    'CHEAPEST'
+  );
+
+  setSelectValue(
+    'resultCount',
+    '3'
+  );
+
+
+  refreshShopsForMarket_({
+    preserveSelection: false,
+    selectAll: true
+  });
+
+
+  schedulePaymentRefresh_({
+    preserveSelection: false,
+    selectRecommended: true
+  });
+
+
+  document.getElementById(
+    'rememberSettings'
+  ).checked = true;
+}
+
+
+function applySettings(settings) {
+
+  setSelectValue(
+    'language',
+    settings.language
+  );
+
+  setSelectValue(
+    'market',
+    settings.market
+  );
+
+  setSelectValue(
+    'currency',
+    settings.currency
+  );
+
+  setSelectValue(
+    'access',
+    settings.maxAccess
+  );
+
+  setSelectValue(
+    'dealMode',
+    settings.dealMode
+  );
+
+  setSelectValue(
+    'resultCount',
+    settings.resultCount || 3
+  );
+
+
+  refreshShopsForMarket_({
+    preserveSelection: false,
+    selectAll: settings.shopMode !== 'SELECTED',
+    selectedValues: settings.shopIds || []
+  });
+
+
+  const savedPaymentMethods = Array.isArray(settings.paymentMethods)
+    ? settings.paymentMethods
+    : [];
+
+  schedulePaymentRefresh_({
+    preserveSelection: false,
+    selectedValues: savedPaymentMethods,
+    selectRecommended: !savedPaymentMethods.length
+  });
+
+
+  document.getElementById(
+    'rememberSettings'
+  ).checked =
+    settings.remember !== false;
+}
+
+
+function setSelectValue(id, value) {
+
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return false;
+  }
+
+
+  const select =
+    document.getElementById(id);
+
+
+  const exists =
+    Array.from(select.options)
+      .some(function(option) {
+
+        return (
+          option.value ===
+          String(value)
+        );
+
+      });
+
+
+  if (exists) {
+
+    select.value =
+      String(value);
+
+    return true;
+  }
+
+
+  return false;
+}
+
+
+function setPaymentSelection(values) {
+
+  const wanted =
+    (values || []).map(function(value) {
+      return String(value);
+    });
+
+
+  document
+    .querySelectorAll(
+      'input[name="paymentMethod"]'
+    )
+    .forEach(function(input) {
+
+      input.checked =
+        wanted.indexOf(
+          input.value
+        ) !== -1;
+
+    });
+}
+
+
+/* =========================================================
+   HUNT THE DEAL
+   ========================================================= */
+
+function huntDeal() {
+
+  const packageId =
+    document.getElementById(
+      'packageSelect'
+    ).value;
+
+
+  if (!packageId) {
+
+    alert(
+      translatedOr_('SELECT_PACKAGE_FIRST', 'Choose a package first.')
+    );
+
+    return;
+  }
+
+
+  const settings =
+    getCurrentSettings();
+
+
+  if (!settings.market) {
+
+    alert(
+      translatedOr_('SELECT_MARKET_FIRST', 'Please select your market.')
+    );
+
+    openSettings();
+
+    return;
+  }
+
+
+  if (!settings.shopIds.length) {
+
+    alert(
+      translatedOr_('SELECT_SHOP_FIRST', 'Please select at least one shop.')
+    );
+
+    openSettings();
+
+    return;
+  }
+
+
+  if (!settings.paymentMethods.length) {
+
+    alert(
+      translatedOr_('SELECT_PAYMENT_FIRST', 'Please select at least one payment method.')
+    );
+
+    openSettings();
+
+    return;
+  }
+
+
+  const request = {
+
+    packageId:
+      packageId,
+
+    quantity:
+      quantity,
+
+    market:
+      settings.market,
+
+    currency:
+      settings.currency,
+
+    maxAccess:
+      settings.maxAccess,
+
+    shopMode:
+      settings.shopMode,
+
+    shopIds:
+      settings.shopIds,
+
+    paymentMethods:
+      settings.paymentMethods,
+
+    dealMode:
+      settings.dealMode,
+
+    resultCount:
+      settings.resultCount,
+
+    newCustomerShopIds:
+      Array.from(newCustomerShopIds_)
+
+  };
+
+
+  setHuntLoading(true);
+
+  hideResults();
+
+
+  google.script.run
+
+    .withSuccessHandler(function(result) {
+
+      setHuntLoading(false);
+
+      renderDealResult(result);
+
+    })
+
+    .withFailureHandler(function(error) {
+
+      setHuntLoading(false);
+
+      console.error(
+        'Deal Hunter error:',
+        error
+      );
+
+      alert(
+        'The Deal Hunter ran into a problem.\n\n' +
+        getErrorMessage(error)
+      );
+
+    })
+
+    .findBestDeal(request);
+}
+
+
+/* =========================================================
+   LOADING STATE
+   ========================================================= */
+
+function setHuntLoading(isLoading) {
+
+  const button =
+    document.getElementById(
+      'huntButton'
+    );
+
+  const loading =
+    document.getElementById(
+      'dealLoading'
+    );
+
+
+  if (isLoading) {
+
+    button.disabled = true;
+
+    button.textContent =
+      '🏹 HUNTING...';
+
+    loading.classList.remove(
+      'hidden'
+    );
+
+    setHunterStatus(
+      'Comparing eligible routes...'
+    );
+
+  } else {
+
+    button.disabled = false;
+
+    button.textContent =
+      'HUNT THE DEAL';
+
+    loading.classList.add(
+      'hidden'
+    );
+
+    setHunterStatus(
+      'Hunt complete.'
+    );
+
+  }
+}
+
+
+/* =========================================================
+   RESULT ROUTER
+   ========================================================= */
+
+function renderDealResult(result, shouldScroll) {
+
+  if (shouldScroll === undefined) shouldScroll = true;
+  lastDealResult = result;
+
+  if (
+    !result ||
+    result.success !== true
+  ) {
+
+    showNoDeal(
+      'The backend did not return a usable result.'
+    );
+
+    return;
+  }
+
+
+  if (
+    result.status ===
+    'NO_ELIGIBLE_DEAL'
+  ) {
+
+    showNoDeal(
+      'No verified route currently matches your market, payment methods and account-access limit.'
+    );
+
+    return;
+  }
+
+
+  if (
+    result.status ===
+    'ROUTE_NOT_BUILT'
+  ) {
+
+    showNoDeal(
+      result.message ||
+      'This package does not yet have a shopping route.'
+    );
+
+    return;
+  }
+
+
+  renderResultHeader(result);
+  renderPrices(result);
+  renderShoppingRoutes(result.routes || []);
+  renderMissingComponents(
+    result.missingComponents || []
+  );
+
+
+  if (
+    result.status ===
+    'INCOMPLETE'
+  ) {
+
+    showIncompleteWarning(result);
+
+  } else {
+
+    hideIncompleteWarning();
+
+  }
+
+
+  document
+    .getElementById('result')
+    .classList
+    .remove('hidden');
+
+
+  if (shouldScroll) {
+    document
+      .getElementById('result')
+      .scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+  }
+}
+
+
+/* =========================================================
+   RESULT HEADER
+   ========================================================= */
+
+function renderResultHeader(result) {
+
+  const resultPackageItem =
+    (bootstrapData && bootstrapData.packages || []).find(function(item) {
+      return String(item.id) === String(result.packageId);
+    });
+
+  document.getElementById(
+    'resultPackageName'
+  ).textContent =
+    resultPackageItem
+      ? getPackageLabel(resultPackageItem)
+      : (result.packageName || 'RoK Package');
+
+
+  document.getElementById(
+    'resultMeta'
+  ).textContent =
+    'Market ' +
+    result.market +
+    ' · Quantity ' +
+    result.quantity +
+    ' · ' +
+    formatDealMode(
+      result.dealMode
+    );
+
+
+  const badge =
+    document.getElementById(
+      'resultBadge'
+    );
+
+
+  badge.textContent =
+    result.status;
+
+
+  badge.className =
+    'result-badge ' +
+    result.status.toLowerCase();
+
+
+  const status =
+    document.getElementById(
+      'resultStatus'
+    );
+
+
+  if (
+    result.status ===
+    'COMPLETE'
+  ) {
+
+    status.textContent =
+      '🎯 ' + t('DEAL_FOUND');
+
+  } else {
+
+    status.textContent =
+      '🔎 PARTIAL ROUTE';
+
+  }
+}
+
+
+/* =========================================================
+   PRICES
+   ========================================================= */
+
+function renderPrices(result) {
+
+  document.getElementById(
+    'officialPrice'
+  ).textContent =
+    formatDisplayMoney(
+      result.officialEUR
+    );
+
+
+  if (
+    result.status === 'COMPLETE'
+  ) {
+
+    document.getElementById(
+      'bestPrice'
+    ).textContent =
+      formatDisplayMoney(
+        result.bestEUR
+      );
+
+
+    document.getElementById(
+      'saving'
+    ).textContent =
+      formatDisplayMoney(
+        result.savingEUR
+      );
+
+
+    document.getElementById(
+      'deniedPercent'
+    ).textContent =
+      result.savingPercent != null
+        ? result.savingPercent.toFixed(1) + ' %'
+        : '—';
+
+
+    document.getElementById(
+      'deniedMoney'
+    ).textContent =
+      result.savingEUR != null
+        ? formatDisplayMoney(
+            result.savingEUR
+          ) +
+          ' kept away from Lilith'
+        : '—';
+
+
+    document.getElementById(
+      'deniedBox'
+    ).classList.remove(
+      'hidden'
+    );
+
+
+  } else {
+
+
+    document.getElementById(
+      'bestPrice'
+    ).textContent =
+      'Incomplete';
+
+
+    document.getElementById(
+      'saving'
+    ).textContent =
+      '—';
+
+
+    document.getElementById(
+      'deniedBox'
+    ).classList.add(
+      'hidden'
+    );
+
+  }
+}
+
+
+/* =========================================================
+   SHOPPING ROUTES
+   ========================================================= */
+
+function renderShoppingRoutes(routes) {
+
+  const container =
+    document.getElementById(
+      'shopRoutes'
+    );
+
+
+  container.innerHTML = '';
+
+
+  const section =
+    document.getElementById(
+      'shoppingRouteSection'
+    );
+
+
+  if (!routes.length) {
+
+    section.classList.add(
+      'hidden'
+    );
+
+    return;
+  }
+
+
+  section.classList.remove(
+    'hidden'
+  );
+
+
+  document.getElementById(
+    'shopCount'
+  ).textContent =
+    routes.length === 1
+      ? translatedOr_('ONE_SHOP_COUNT', '1 SHOP')
+      : routes.length + ' ' + translatedOr_('SHOPS', 'SHOPS');
+
+
+  routes.forEach(function(route) {
+
+    container.appendChild(
+      createShopCard(route)
+    );
+
+  });
+}
+
+
+/* =========================================================
+   SHOP CARD
+   ========================================================= */
+
+function createShopCard(route) {
+
+  const card =
+    document.createElement('article');
+
+  card.className =
+    'shop-card';
+
+
+  /* SHOP HEADER */
+
+  const header =
+    document.createElement('div');
+
+  header.className =
+    'shop-card-header';
+
+
+  const shopInfo =
+    document.createElement('div');
+
+
+  const shopName =
+    document.createElement('h3');
+
+  shopName.textContent =
+    route.shopName ||
+    route.shopId;
+
+
+  const shopMeta =
+    document.createElement('div');
+
+  shopMeta.className =
+    'shop-meta';
+
+  shopMeta.textContent =
+    '💳 ' +
+    formatPayment(
+      route.payment
+    ) +
+    ' · 🔐 Access ' +
+    route.accessLevel;
+
+
+  shopInfo.appendChild(
+    shopName
+  );
+
+  shopInfo.appendChild(
+    shopMeta
+  );
+
+
+  const subtotal =
+    document.createElement('strong');
+
+  subtotal.className =
+    'shop-subtotal';
+
+  subtotal.textContent =
+    formatDisplayMoney(
+      route.subtotalEUR
+    );
+
+
+  header.appendChild(shopInfo);
+
+  const priceWrap = document.createElement('div');
+  priceWrap.className = 'shop-price-wrap';
+  priceWrap.appendChild(subtotal);
+
+  const priceInfo = document.createElement('details');
+  priceInfo.className = 'deal-price-info';
+
+  const priceInfoButton = document.createElement('summary');
+  priceInfoButton.className = 'deal-price-info-button';
+  priceInfoButton.textContent = 'i';
+  priceInfoButton.setAttribute('aria-label',
+    translatedOr_('PRICE_BREAKDOWN', 'Price breakdown'));
+
+  const priceInfoPopover = document.createElement('div');
+  priceInfoPopover.className = 'deal-price-info-popover';
+
+  function addBreakdownLine(label, value, cls) {
+    const line = document.createElement('div');
+    line.className = 'deal-breakdown-line' + (cls ? ' ' + cls : '');
+    const left = document.createElement('span');
+    left.textContent = label;
+    const right = document.createElement('strong');
+    right.textContent = value;
+    line.appendChild(left);
+    line.appendChild(right);
+    priceInfoPopover.appendChild(line);
+  }
+
+  if (Number.isFinite(Number(route.baseMerchandiseEUR))) {
+    addBreakdownLine(
+      translatedOr_('BASE_PRICE', 'Shop price'),
+      formatDisplayMoney(Number(route.baseMerchandiseEUR))
+    );
+  }
+
+  if (route.newCustomerCouponAvailable) {
+    addBreakdownLine(
+      translatedOr_('NEW_CUSTOMER_DISCOUNT', 'New-customer discount'),
+      route.couponApplied
+        ? '−' + formatDisplayMoney(Number(route.couponDiscountEUR || 0))
+        : translatedOr_('NOT_APPLIED', 'not applied'),
+      route.couponApplied ? 'discount' : 'muted'
+    );
+  } else if (route.couponApplied && Number(route.couponDiscountEUR) > 0) {
+    addBreakdownLine(
+      translatedOr_('COUPON_DISCOUNT', 'Coupon discount'),
+      '−' + formatDisplayMoney(Number(route.couponDiscountEUR)),
+      'discount'
+    );
+  }
+
+  if (Number.isFinite(Number(route.merchandiseSubtotalEUR))) {
+    addBreakdownLine(
+      translatedOr_('MERCHANDISE_SUBTOTAL', 'Items'),
+      formatDisplayMoney(Number(route.merchandiseSubtotalEUR))
+    );
+  }
+
+  if (Number.isFinite(Number(route.paymentFeeEUR))) {
+    addBreakdownLine(
+      translatedOr_('PAYMENT_FEE', 'Payment fee'),
+      (Number(route.paymentFeeEUR) >= 0 ? '+' : '−') +
+        formatDisplayMoney(Math.abs(Number(route.paymentFeeEUR)))
+    );
+  }
+
+  addBreakdownLine(
+    translatedOr_('TOTAL', 'Total'),
+    formatDisplayMoney(Number(route.subtotalEUR)),
+    'total'
+  );
+
+  priceInfo.appendChild(priceInfoButton);
+  priceInfo.appendChild(priceInfoPopover);
+  priceWrap.appendChild(priceInfo);
+  header.appendChild(priceWrap);
+
+
+  card.appendChild(
+    header
+  );
+
+
+  /* Checkout breakdown is intentionally shown only in the price (i) popover. */
+
+  /* COMPONENT LIST */
+
+  const list =
+    document.createElement('div');
+
+  list.className =
+    'component-list';
+
+
+  (route.components || [])
+    .forEach(function(component) {
+
+      const row =
+        document.createElement('div');
+
+      row.className =
+        'component-row';
+
+
+      const left =
+        document.createElement('span');
+
+      left.textContent =
+        component.quantity +
+        ' × ' +
+        formatComponentName(
+          component.tierId
+        );
+
+
+      const right =
+        document.createElement('strong');
+
+      right.textContent =
+        formatDisplayMoney(
+          component.subtotalEUR
+        );
+
+
+      row.appendChild(left);
+      row.appendChild(right);
+
+      list.appendChild(row);
+
+    });
+
+
+  card.appendChild(list);
+
+
+  /* IDEA-006: USER-FACING DATA CONFIDENCE STATUS */
+
+  const statusCode = String(route.dataStatus || 'PARTIAL').toUpperCase();
+  const statusConfig = {
+    VERIFIED: {
+      icon: '✓', cls: 'verified',
+      label: 'DATA_STATUS_VERIFIED', help: 'DATA_STATUS_VERIFIED_HELP',
+      fallback: 'Verified', helpFallback: 'Price and relevant checkout costs are verified.'
+    },
+    FEE_PENDING: {
+      icon: '⚠', cls: 'fee-pending',
+      label: 'DATA_STATUS_FEE_PENDING', help: 'DATA_STATUS_FEE_PENDING_HELP',
+      fallback: 'Fee pending', helpFallback: 'The price is known, but at least one relevant payment fee is not fully verified yet.'
+    },
+    PARTIAL: {
+      icon: '◐', cls: 'partial',
+      label: 'DATA_STATUS_PARTIAL', help: 'DATA_STATUS_PARTIAL_HELP',
+      fallback: 'Partially verified', helpFallback: 'The deal is usable, but some data components are not fully confirmed yet.'
+    },
+    STALE: {
+      icon: '↻', cls: 'stale',
+      label: 'DATA_STATUS_STALE', help: 'DATA_STATUS_STALE_HELP',
+      fallback: 'Stale', helpFallback: 'The data is older than the defined freshness period and should be rechecked.'
+    },
+    UNAVAILABLE: {
+      icon: '×', cls: 'unavailable',
+      label: 'DATA_STATUS_UNAVAILABLE', help: 'DATA_STATUS_UNAVAILABLE_HELP',
+      fallback: 'Temporarily unavailable', helpFallback: 'The shop or route is currently not purchasable.'
+    }
+  };
+  const statusDef = statusConfig[statusCode] || statusConfig.PARTIAL;
+  const status = document.createElement('div');
+  status.className = 'route-status ' + statusDef.cls;
+  status.setAttribute('title', translatedOr_(statusDef.help, statusDef.helpFallback));
+  status.setAttribute('aria-label', translatedOr_(statusDef.help, statusDef.helpFallback));
+  status.textContent = statusDef.icon + ' ' + translatedOr_(statusDef.label, statusDef.fallback);
+  card.appendChild(status);
+
+
+  /* COUPON / NEW CUSTOMER */
+
+  if (route.newCustomerCouponAvailable && route.coupon) {
+    const eligibility = document.createElement('label');
+    eligibility.className = 'new-customer-toggle';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = newCustomerShopIds_.has(route.shopId);
+
+    const copy = document.createElement('span');
+    copy.innerHTML =
+      '<strong>' + translatedOr_('NEW_CUSTOMER_AT_SHOP', 'I am a new customer at this shop') + '</strong>' +
+      '<small>🎟️ ' + route.coupon + ' · ' +
+      translatedOr_('APPLY_NEW_CUSTOMER_DISCOUNT', 'apply new-customer discount') + '</small>';
+
+    checkbox.addEventListener('change', function() {
+      if (checkbox.checked) {
+        newCustomerShopIds_.add(route.shopId);
+      } else {
+        newCustomerShopIds_.delete(route.shopId);
+      }
+      huntDeal();
+    });
+
+    eligibility.appendChild(checkbox);
+    eligibility.appendChild(copy);
+    card.appendChild(eligibility);
+
+  } else if (route.coupon && route.couponApplied) {
+    const coupon = document.createElement('div');
+    coupon.className = 'coupon-box';
+
+    const couponLabel = document.createElement('span');
+    couponLabel.textContent = '🎟️ ' + translatedOr_('COUPON', 'Coupon');
+
+    const couponCode = document.createElement('strong');
+    couponCode.textContent = route.coupon;
+
+    coupon.appendChild(couponLabel);
+    coupon.appendChild(couponCode);
+    card.appendChild(coupon);
+  }
+
+  /* SHOP BUTTON */
+
+  if (
+    route.purchaseUrl &&
+    isSafeExternalUrl(
+      route.purchaseUrl
+    )
+  ) {
+
+    const link =
+      document.createElement('a');
+
+    link.className =
+      'shop-button';
+
+    link.href =
+      route.purchaseUrl;
+
+    link.target =
+      '_blank';
+
+    link.rel =
+      'noopener noreferrer';
+
+    link.textContent =
+      '🛒 GO TO ' +
+      String(
+        route.shopName ||
+        route.shopId
+      ).toUpperCase();
+
+
+    card.appendChild(
+      link
+    );
+
+
+  } else {
+
+    const unavailable =
+      document.createElement('div');
+
+    unavailable.className =
+      'shop-link-missing';
+
+    unavailable.textContent =
+      '⚠ ' + translatedOr_('PURCHASE_LINK_MISSING', 'Purchase link not available yet');
+
+
+    card.appendChild(
+      unavailable
+    );
+
+  }
+
+
+  return card;
+}
+
+
+/* =========================================================
+   MISSING COMPONENTS
+   ========================================================= */
+
+function renderMissingComponents(items) {
+
+  const section =
+    document.getElementById(
+      'missingComponentsSection'
+    );
+
+  const container =
+    document.getElementById(
+      'missingComponents'
+    );
+
+
+  container.innerHTML = '';
+
+
+  if (!items.length) {
+
+    section.classList.add(
+      'hidden'
+    );
+
+    return;
+  }
+
+
+  section.classList.remove(
+    'hidden'
+  );
+
+
+  items.forEach(function(item) {
+
+    const row =
+      document.createElement('div');
+
+    row.className =
+      'missing-component';
+
+
+    const name =
+      document.createElement('span');
+
+    name.textContent =
+      item.quantity +
+      ' × ' +
+      formatTierName(
+        item.tierId
+      );
+
+
+    const status =
+      document.createElement('strong');
+
+    status.textContent =
+      translatedOr_('NO_VERIFIED_ROUTE', 'NO VERIFIED ROUTE');
+
+
+    row.appendChild(name);
+    row.appendChild(status);
+
+    container.appendChild(row);
+
+  });
+}
+
+
+/* =========================================================
+   INCOMPLETE ROUTE
+   ========================================================= */
+
+function showIncompleteWarning(result) {
+
+  const warning =
+    document.getElementById(
+      'incompleteWarning'
+    );
+
+
+  const missingCount =
+    (
+      result.missingComponents ||
+      []
+    ).length;
+
+
+  document.getElementById(
+    'incompleteText'
+  ).textContent =
+    missingCount +
+    (
+      missingCount === 1
+        ? ' package component currently has'
+        : ' package components currently have'
+    ) +
+    ' no eligible verified deal. ' +
+    'The known subtotal is ' +
+    formatDisplayMoney(
+      result.knownSubtotalEUR
+    ) +
+    '.';
+
+
+  warning.classList.remove(
+    'hidden'
+  );
+}
+
+
+function hideIncompleteWarning() {
+
+  document
+    .getElementById(
+      'incompleteWarning'
+    )
+    .classList
+    .add('hidden');
+}
+
+
+/* =========================================================
+   NO DEAL
+   ========================================================= */
+
+function showNoDeal(message) {
+
+  hideResults();
+
+
+  document.getElementById(
+    'noDealText'
+  ).textContent =
+    message;
+
+
+  document
+    .getElementById(
+      'noDeal'
+    )
+    .classList
+    .remove('hidden');
+
+
+  document
+    .getElementById(
+      'noDeal'
+    )
+    .scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    });
+}
+
+
+function hideResults() {
+
+  [
+    'result',
+    'noDeal'
+  ].forEach(function(id) {
+
+    document
+      .getElementById(id)
+      .classList
+      .add('hidden');
+
+  });
+}
+
+
+/* =========================================================
+   STATUS
+   ========================================================= */
+
+function setHunterStatus(message) {
+
+  const element =
+    document.getElementById(
+      'hunterStatus'
+    );
+
+  if (element) {
+    element.textContent =
+      message;
+  }
+}
+
+
+/* =========================================================
+   FORMATTERS
+   ========================================================= */
+
+function getDisplayCurrencyInfo() {
+
+  const select =
+    document.getElementById('currency');
+
+  const selectedCode =
+    String(
+      select && select.value
+        ? select.value
+        : 'EUR'
+    ).toUpperCase();
+
+  const currencies =
+    bootstrapData && Array.isArray(bootstrapData.currencies)
+      ? bootstrapData.currencies
+      : [];
+
+  const info =
+    currencies.find(function(item) {
+      return String(item.code || '').toUpperCase() === selectedCode;
+    });
+
+  return info || {
+    code: 'EUR',
+    name: 'Euro',
+    symbol: '€',
+    unitsPerEUR: 1
+  };
+}
+
+
+function getFormattingLocale() {
+
+  const language =
+    getSelectedLanguage();
+
+  const meta =
+    getLanguageMeta(language);
+
+  return meta && meta.code
+    ? meta.code
+    : 'en';
+}
+
+
+function formatNominalTierMoney(nominalValue) {
+
+  if (!Number.isFinite(Number(nominalValue))) {
+    return '—';
+  }
+
+  const currency =
+    getDisplayCurrencyInfo();
+
+  try {
+
+    return new Intl.NumberFormat(
+      getFormattingLocale(),
+      {
+        style: 'currency',
+        currency: currency.code || 'EUR',
+        currencyDisplay: 'symbol'
+      }
+    ).format(Number(nominalValue));
+
+  } catch (error) {
+
+    return Number(nominalValue).toFixed(2) +
+      ' ' +
+      (currency.code || 'EUR');
+  }
+}
+
+
+function formatDisplayMoney(valueEUR) {
+
+  if (
+    valueEUR === null ||
+    valueEUR === undefined ||
+    valueEUR === '' ||
+    !Number.isFinite(Number(valueEUR))
+  ) {
+    return '—';
+  }
+
+  const currency =
+    getDisplayCurrencyInfo();
+
+  const unitsPerEUR =
+    Number(currency.unitsPerEUR);
+
+  const safeRate =
+    Number.isFinite(unitsPerEUR) &&
+    unitsPerEUR > 0
+      ? unitsPerEUR
+      : 1;
+
+  const converted =
+    Number(valueEUR) * safeRate;
+
+  try {
+
+    return new Intl.NumberFormat(
+      getFormattingLocale(),
+      {
+        style: 'currency',
+        currency: currency.code || 'EUR',
+        currencyDisplay: 'symbol'
+      }
+    ).format(converted);
+
+  } catch (error) {
+
+    return converted.toFixed(2) +
+      ' ' +
+      (currency.code || 'EUR');
+  }
+}
+
+
+function formatComponentName(componentId) {
+
+  const id = String(componentId || '');
+
+  if (bootstrapData && Array.isArray(bootstrapData.packages)) {
+    const item = bootstrapData.packages.find(function(packageItem) {
+      return String(packageItem.id) === id;
+    });
+    if (item) return getPackageLabel(item);
+  }
+
+  return formatTierName(id);
+}
+
+
+function formatTierName(tierId) {
+
+  const text =
+    String(
+      tierId || ''
+    );
+
+
+  const match =
+    text.match(
+      /TIER_(\d+)/
+    );
+
+
+  if (!match) {
+    return text;
+  }
+
+
+  const digits =
+    match[1];
+
+
+  if (digits.length <= 2) {
+
+    return (
+      '€0.' +
+      digits.padStart(2, '0') +
+      ' package'
+    );
+  }
+
+
+  const cents =
+    digits.slice(-2);
+
+  const euros =
+    digits.slice(
+      0,
+      -2
+    );
+
+
+  return (
+    '€' +
+    euros +
+    '.' +
+    cents +
+    ' package'
+  );
+}
+
+
+function formatPayment(payment) {
+
+  if (!payment) {
+    return 'Payment';
+  }
+
+
+  const labels = {
+    'PAYPAL': 'PayPal',
+    'CARD': 'Visa / MasterCard',
+    'VISA / MASTERCARD': 'Visa / MasterCard',
+    'APPLEPAY': 'Apple Pay',
+    'APPLE PAY': 'Apple Pay',
+    'GOOGLEPAY': 'Google Pay',
+    'GOOGLE PAY': 'Google Pay',
+    'IDEAL_WERO': 'iDEAL / Wero',
+    'BLIK': 'BLIK',
+    'BANCONTACT': 'Bancontact',
+    'EPS': 'EPS',
+    'KLARNA': 'Klarna',
+    'TRUSTLY': 'Trustly',
+    'SWISH': 'Swish',
+    'VIPPS': 'Vipps',
+    'MOBILEPAY': 'MobilePay',
+    'MBWAY': 'MB WAY',
+    'MULTIBANCO': 'Multibanco',
+    'BIZUM': 'Bizum',
+    'PIX': 'Pix',
+    'FPX': 'FPX',
+    'PAYNOW': 'PayNow',
+    'PROMPTPAY': 'PromptPay',
+    'ALIPAYHK': 'AlipayHK',
+    'PAYME': 'PayMe',
+    'TWINT': 'TWINT',
+    'PAYPAY': 'PayPay',
+    'KONBINI': 'Konbini',
+    'KAKAOPAY': 'KakaoPay',
+    'GCASH': 'GCash',
+    'GRABPAY': 'GrabPay',
+    'DOKU': 'DOKU',
+    'OXXO': 'OXXO',
+    'CASHAPPPAY': 'Cash App Pay',
+    'LINEPAY': 'LINE Pay',
+    'SHOPEEPAY': 'ShopeePay',
+    'MYCARD': 'MyCard',
+    'QIWI': 'QIWI',
+    'BANK': 'Pay by Bank'
+  };
+
+  const raw = String(payment);
+  return labels[raw.toUpperCase()] || raw;
+}
+
+
+function formatDealMode(mode) {
+
+  switch (
+    String(mode || '').toUpperCase()
+  ) {
+
+    case 'ONE_SHOP':
+      return t('ONE_SHOP');
+
+    case 'SIMPLE':
+      return t('SIMPLE');
+
+    default:
+      return t('CHEAPEST');
+  }
+}
+
+
+function translatedOr_(key, fallback) {
+  const value = t(key);
+  return value === key ? fallback : value;
+}
+
+
+/* =========================================================
+   URL SAFETY
+   ========================================================= */
+
+function isSafeExternalUrl(url) {
+
+  try {
+
+    const parsed =
+      new URL(url);
+
+    return (
+      parsed.protocol === 'https:' ||
+      parsed.protocol === 'http:'
+    );
+
+  } catch (error) {
+
+    return false;
+  }
+}
+
+
+/* =========================================================
+   ERROR HELPER
+   ========================================================= */
+
+function getErrorMessage(error) {
+
+  if (!error) {
+    return 'Unknown error';
+  }
+
+
+  if (error.message) {
+    return error.message;
+  }
+
+
+  return String(error);
+}

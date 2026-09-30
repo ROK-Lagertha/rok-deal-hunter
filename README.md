@@ -30,3 +30,7 @@ Never commit passwords, game credentials, payment credentials, API keys, tokens,
 ## Data
 
 The Google Sheet remains the live data source. Shop prices, routes, markets, currencies and payment data are not duplicated into this repository unless deliberately exported for documentation or backup.
+
+## Cloudflare migration
+
+Migration work lives on `feature/cloudflare-migration`. `app/` remains the Apps Script fallback; `public/`, `src/` and `wrangler.jsonc` form the Cloudflare deployment. See `docs/cloudflare-migration.md`.
