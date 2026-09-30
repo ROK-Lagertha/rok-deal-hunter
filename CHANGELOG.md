@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-30 — Deal Hunter 2.0 UI baseline & documentation refresh
+- Finalized the current Header and Footer 2.0 visual baseline.
+- Integrated the standalone glowing ROK Deal Hunter crest into the cinematic hero.
+- Completed the compact full-panorama mobile hero treatment.
+- Blended the desktop hero into the application background and overlapping Deal Finder.
+- Refreshed README documentation for the current Cloudflare architecture and functional-recovery status.
+- Documented the remaining published data/API layer and non-blocking backend-status work.
+
 ## 2026-09-30 — Desktop Hero / Deal Finder Blend
 - Removed the visible desktop hero cutoff with an extended layered navy/purple dissolve.
 - Extended the visual fade beyond the artwork boundary into the application background.
