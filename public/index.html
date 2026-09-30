@@ -237,29 +237,32 @@
        ====================================================== -->
 
   <header class="header">
+    <div class="header-shell">
+      <a class="brand-lockup" href="#" aria-label="RoK Deal Hunter Home">
+        <span class="brand-mark" aria-hidden="true">◆</span>
+        <span class="brand-copy">
+          <span class="brand">ROK <b>DEAL HUNTER</b></span>
+          <span class="tagline">FIND <i></i> COMPARE <i></i> SAVE</span>
+        </span>
+      </a>
 
-    <div>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a class="nav-link active" href="#">⌂ <span>Home</span></a>
+        <a class="nav-link" href="#deal-hunter">♙ <span>Deals</span></a>
+        <a class="nav-link" href="#shops">▱ <span>Shops</span></a>
+        <a class="nav-link" href="#comparison">▣ <span>Vergleich</span></a>
+        <a class="nav-link" href="#guides">▤ <span>Guides</span></a>
+        <a class="nav-link" href="#tools">⌁ <span>Tools</span></a>
+        <a class="nav-link" href="#favorites">♡ <span>Favoriten</span></a>
+      </nav>
 
-      <div class="brand">
-        🏹 ROK DEAL HUNTER
+      <div class="header-actions">
+        <button class="language-button" type="button" aria-label="Language">
+          <span>🇩🇪</span><strong>DE</strong><span class="chevron">⌄</span>
+        </button>
+        <button class="settings-button" type="button" onclick="openSettings()" title="Player Settings" aria-label="Player Settings">⚙</button>
       </div>
-
-      <div class="tagline" data-i18n="APP_TAGLINE">
-        Stop feeding Lilith more than necessary.
-      </div>
-
     </div>
-
-
-    <button
-      class="settings-button"
-      type="button"
-      onclick="openSettings()"
-      title="Player Settings"
-    >
-      ⚙️
-    </button>
-
   </header>
 
 
@@ -700,18 +703,42 @@
          FOOTER
          ==================================================== -->
 
-    <div class="footer">
+    <footer class="footer">
+      <div class="footer-top">
+        <div class="footer-brand">
+          <div class="footer-logo"><span>◆</span> ROK <b>DEAL HUNTER</b></div>
+          <p>Find better Rise of Kingdoms offers, compare real checkout costs and keep more value for your kingdom.</p>
+          <span class="footer-motto">FIND <i></i> COMPARE <i></i> SAVE</span>
+        </div>
 
-      <strong>
-        RoK Deal Hunter
-      </strong>
+        <div class="footer-links">
+          <div>
+            <strong>Deal Hunter</strong>
+            <a href="#deal-hunter">Deals</a>
+            <a href="#shops">Shops</a>
+            <a href="#comparison">Vergleich</a>
+          </div>
+          <div>
+            <strong>Entdecken</strong>
+            <a href="#guides">Guides</a>
+            <a href="#tools">Tools</a>
+            <a href="#favorites">Favoriten</a>
+          </div>
+          <div>
+            <strong>Info</strong>
+            <a href="#faq">FAQ</a>
+            <a href="#data">Daten &amp; Preise</a>
+            <button type="button" onclick="openSettings()">Player Settings</button>
+          </div>
+        </div>
+      </div>
 
-      <span>
-        Built for governors who prefer troops
-        over unnecessary checkout fees.
-      </span>
-
-    </div>
+      <div class="footer-bottom">
+        <span>© 2026 RoK Deal Hunter</span>
+        <span class="footer-disclaimer">Unofficial community tool. Not affiliated with Lilith Games.</span>
+        <span class="footer-status"><i></i> Deal intelligence online</span>
+      </div>
+    </footer>
 
 
   </main>
