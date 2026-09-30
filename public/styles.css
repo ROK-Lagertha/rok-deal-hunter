@@ -2428,3 +2428,81 @@ html[dir="rtl"] .shop-button {
     font-size: 7.25px;
   }
 }
+
+/* ==========================================================
+   ROK DEAL HUNTER 2.0 — Hero Brand Crest
+   Replaces the former hero copy with the standalone crest.
+   ========================================================== */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.hero-2__content.hero-2__brand {
+  width: min(610px, 45vw);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: none;
+}
+
+.hero-2__logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 0 7px rgba(255, 55, 220, .95))
+    drop-shadow(0 0 18px rgba(211, 49, 255, .68))
+    drop-shadow(0 0 36px rgba(99, 62, 255, .38));
+  transform: translateZ(0);
+}
+
+.hero-2__brand::before {
+  content: "";
+  position: absolute;
+  width: min(620px, 48vw);
+  aspect-ratio: 1.7 / 1;
+  border-radius: 50%;
+  z-index: -1;
+  background: radial-gradient(ellipse at center,
+    rgba(255, 45, 214, .22) 0%,
+    rgba(145, 49, 255, .14) 36%,
+    rgba(35, 62, 210, .06) 58%,
+    transparent 74%);
+  filter: blur(18px);
+  pointer-events: none;
+}
+
+@media (max-width: 760px) {
+  .hero-2__content.hero-2__brand {
+    width: min(82vw, 470px);
+    margin: 0 auto;
+    padding: 0;
+  }
+
+  .hero-2__brand::before {
+    width: min(90vw, 500px);
+  }
+
+  .hero-2__logo {
+    filter:
+      drop-shadow(0 0 5px rgba(255, 55, 220, .95))
+      drop-shadow(0 0 14px rgba(211, 49, 255, .68))
+      drop-shadow(0 0 28px rgba(99, 62, 255, .34));
+  }
+}
+
+@media (max-width: 520px) {
+  .hero-2__content.hero-2__brand {
+    width: min(88vw, 420px);
+  }
+}

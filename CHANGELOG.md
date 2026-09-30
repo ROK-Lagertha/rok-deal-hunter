@@ -40,3 +40,9 @@ Planned work is developed on feature branches and merged only after testing.
 - Pulled the hero copy higher into the lower artwork/fog area.
 - Reduced mobile hero vertical footprint and spacing to bring the Deal Hunter form into view sooner.
 - Kept the full panorama visible on mobile and left the desktop hero unchanged.
+
+## 2026-09-30 — Hero Brand Crest
+- Replaced hero marketing copy with the standalone ROK Deal Hunter crest.
+- Added transparent `Logo_DEALHUNTER.png` as a responsive hero asset.
+- Added layered magenta/purple glow so the crest lifts visually from the kingdom artwork.
+- Preserved responsive hero artwork, fade treatment, header, footer and existing application logic.
