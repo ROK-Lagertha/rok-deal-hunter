@@ -33,4 +33,4 @@ The Google Sheet remains the live data source. Shop prices, routes, markets, cur
 
 ## Cloudflare migration
 
-Migration work lives on `feature/cloudflare-migration`. `app/` remains the Apps Script fallback; `public/`, `src/` and `wrangler.jsonc` form the Cloudflare deployment. See `docs/cloudflare-migration.md`.
+Migration work lives on `feature/deal-settings`. `app/` remains the Apps Script fallback; `public/`, `src/` and `wrangler.jsonc` form the Cloudflare deployment. See `docs/cloudflare-migration.md`.

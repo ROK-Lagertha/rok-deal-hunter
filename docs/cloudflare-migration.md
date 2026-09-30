@@ -6,4 +6,4 @@ Pending: published Cloudflare data layer and migration of getBootstrapData, getS
 
 The existing app/ directory remains the Apps Script reference/fallback during migration.
 
-Deploy from repository root with `npx wrangler deploy`. During migration use only `feature/cloudflare-migration`. Never commit credentials or secrets.
+Deploy from repository root with `npx wrangler deploy`. During migration use only `feature/deal-settings`. Never commit credentials or secrets.
