@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-09-30 — Desktop Hero / Deal Finder Blend
+- Removed the visible desktop hero cutoff with an extended layered navy/purple dissolve.
+- Extended the visual fade beyond the artwork boundary into the application background.
+- Moved the Deal Finder upward so it overlaps the hero transition.
+- Reduced empty vertical space between hero and search experience.
+- Added a restrained ambient glow behind the transition and finder.
+- Preserved the current mobile hero composition and existing application logic.
+
 ## [Unreleased]
 
 Planned work is developed on feature branches and merged only after testing.
